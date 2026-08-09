@@ -1,0 +1,22 @@
+{
+  "name": "@eaw/preact",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@eaw/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "preact": ">=10.0.0"
+  },
+  "devDependencies": {
+    "preact": "^10.19.0",
+    "typescript": "^5.9.2"
+  }
+}
