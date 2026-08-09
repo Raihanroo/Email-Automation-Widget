@@ -1,7 +1,19 @@
 export * from "./types";
+export * from "./errors";
 export { ApiClient } from "./ApiClient";
+export type { ApiClientOptions } from "./ApiClient";
 export { createDefaultAdapter } from "./DefaultAdapter";
 export { EventBus } from "./EventBus";
+export type { EventHandler } from "./EventBus";
 export { Store } from "./Store";
-export { defaultTheme } from "./Theme";
-export { cn, formatDate } from "./Utils";
+export { defaultTheme, darkTheme, resolveTheme, themeToCssVars } from "./Theme";
+export {
+  cn,
+  formatDate,
+  isValidEmail,
+  truncate,
+  generateId,
+  debounce,
+  deepMerge,
+  renderPlaceholders,
+} from "./Utils";
