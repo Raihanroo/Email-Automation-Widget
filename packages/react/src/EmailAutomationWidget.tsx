@@ -1,51 +1,114 @@
-import React, { useState, useEffect } from "react";
-import { createDefaultAdapter, ApiClient } from "@eaw/core";
-
-interface WidgetProps {
-  baseURL?: string;
-  token?: string;
-  mode?: "dashboard" | "composer" | "mailbox";
-}
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ApiClient,
+  createDefaultAdapter,
+  resolveTheme,
+  themeToCssVars,
+  MailboxItem,
+  WidgetProps,
+} from "@eaw/core";
 
 export const EmailAutomationWidget: React.FC<WidgetProps> = ({
+  mode = "dashboard",
+  layout = "full",
+  theme: themeOverride,
   baseURL = "/api",
   token,
-  mode = "dashboard",
+  onError,
 }) => {
-  const [emails, setEmails] = useState<any[]>([]);
+  const [emails, setEmails] = useState<MailboxItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const theme = useMemo(() => resolveTheme(themeOverride), [themeOverride]);
+  const cssVars = useMemo(
+    () => themeToCssVars(theme) as React.CSSProperties,
+    [theme]
+  );
+
+  const adapter = useMemo(() => {
     const client = new ApiClient(
       baseURL,
       token ? { type: "Bearer", token } : undefined
     );
-    const adapter = createDefaultAdapter(client);
+    return createDefaultAdapter(client);
+  }, [baseURL, token]);
 
-    if (mode === "mailbox") {
-      adapter.mailbox().then(setEmails);
-    }
-  }, [baseURL, token, mode]);
+  useEffect(() => {
+    if (mode !== "mailbox") return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    adapter
+      .mailbox()
+      .then((result) => {
+        if (!cancelled) setEmails(result.items);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setError(err.message);
+        onError?.(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, adapter, onError]);
 
   return (
     <div
+      className="eaw-root"
+      data-layout={layout}
       style={{
+        ...cssVars,
         padding: "20px",
-        border: "1px solid #ccc",
-        borderRadius: "8px",
-        fontFamily: "sans-serif",
+        border: "1px solid var(--eaw-color-border)",
+        borderRadius: "var(--eaw-radius)",
+        background: "var(--eaw-color-bg)",
+        color: "var(--eaw-color-text-primary)",
+        fontFamily: "var(--eaw-font-family)",
       }}
     >
-      <h2>Email Automation Widget</h2>
+      <h2 style={{ margin: "0 0 12px", fontSize: "18px" }}>
+        Email Automation Widget
+      </h2>
+
       {mode === "mailbox" && (
-        <ul>
-          {emails.map((mail, i) => (
-            <li key={i}>
-              {mail.subject} - <i>{mail.from}</i>
-            </li>
-          ))}
-        </ul>
+        <>
+          {loading && <p>Loading mailbox…</p>}
+          {error && <p style={{ color: "var(--eaw-color-danger)" }}>{error}</p>}
+          {!loading && !error && (
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {emails.map((mail) => (
+                <li
+                  key={mail.id}
+                  style={{
+                    padding: "8px 0",
+                    borderBottom: "1px solid var(--eaw-color-border)",
+                  }}
+                >
+                  <strong>{mail.subject}</strong>{" "}
+                  <span style={{ color: "var(--eaw-color-text-secondary)" }}>
+                    — {mail.from}
+                  </span>
+                </li>
+              ))}
+              {emails.length === 0 && <li>No messages yet.</li>}
+            </ul>
+          )}
+        </>
       )}
-      {mode === "dashboard" && <p>Dashboard Content Loading...</p>}
+
+      {mode === "dashboard" && (
+        <p style={{ color: "var(--eaw-color-text-secondary)" }}>
+          Dashboard content coming in a later milestone.
+        </p>
+      )}
     </div>
   );
 };
