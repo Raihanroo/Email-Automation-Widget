@@ -1,0 +1,35 @@
+{
+  "name": "@eaw/svelte",
+  "version": "1.0.0",
+  "type": "module",
+  "svelte": "./dist/index.js",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "svelte": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "svelte-package -i src -o dist",
+    "dev": "svelte-package -i src -o dist --watch",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@eaw/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "svelte": ">=5.0.0"
+  },
+  "devDependencies": {
+    "svelte": "^5.0.0",
+    "@sveltejs/package": "^2.3.7",
+    "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "svelte-check": "^3.8.5",
+    "typescript": "^5.9.2"
+  }
+}
