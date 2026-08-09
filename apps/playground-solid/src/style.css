@@ -1,0 +1,12 @@
+.page {
+  padding: 40px;
+  background-color: #f3f4f6;
+  min-height: 100vh;
+  font-family: sans-serif;
+}
+.card {
+  max-width: 800px;
+  margin: 0 auto;
+  background-color: #fff;
+  border-radius: 8px;
+}

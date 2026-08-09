@@ -1,0 +1,22 @@
+{
+  "name": "playground-solid",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@eaw/core": "workspace:*",
+    "@eaw/solid": "workspace:*",
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vite": "^4.4.5",
+    "vite-plugin-solid": "^2.10.2"
+  }
+}
