@@ -1,24 +1,37 @@
 {
   "name": "@eaw/angular",
   "version": "1.0.0",
+  "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@eaw/core": "workspace:*"
+    "@eaw/core": "file:../core"
   },
   "peerDependencies": {
     "@angular/core": ">=21.0.0",
     "@angular/common": ">=21.0.0"
   },
   "devDependencies": {
-    "@angular/core": "^21.2.0",
-    "@angular/common": "^21.2.0",
-    "typescript": "^5.9.2"
+    "@angular/core": "^21.2.19",
+    "@angular/common": "^21.2.19",
+    "@angular/platform-browser": "^21.2.19",
+    "@angular/platform-browser-dynamic": "^21.2.19",
+    "@angular/compiler": "^21.2.19",
+    "@angular/compiler-cli": "^21.2.19",
+    "@angular/build": "^21.2.19",
+    "typescript": "^5.9.2",
+    "zone.js": "^0.15.1",
+    "vite": "^6.3.5",
+    "vitest": "^4.0.8",
+    "jsdom": "^25.0.1",
+    "@analogjs/vite-plugin-angular": "^2.6.4",
+    "@analogjs/vitest-angular": "^2.6.4"
   }
 }
