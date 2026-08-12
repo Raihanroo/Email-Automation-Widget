@@ -81,7 +81,11 @@ export const EmailAutomationWidget = defineComponent({
           err instanceof Error ? err.message : "Failed to load mailbox";
         error.value = message;
         const e = err instanceof Error ? err : new Error(message);
-        props.onError?.(e);
+        // NOTE: don't also call `props.onError?.(e)` here — Vue treats a
+        // prop named `onError` as an automatic listener for the `error`
+        // emit (any `emits: [...]` entry gets this treatment for a
+        // same-named `on<Event>` prop), so `emit("error", e)` already
+        // invokes it. Calling both fired the callback twice per failure.
         emit("error", e);
       } finally {
         if (!cancelled) loading.value = false;

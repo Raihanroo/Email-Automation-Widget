@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@eaw/core": "workspace:*"
@@ -17,6 +18,10 @@
   },
   "devDependencies": {
     "preact": "^10.19.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.9",
+    "jsdom": "^25.0.1",
+    "@testing-library/preact": "^3.2.4",
+    "@testing-library/jest-dom": "^6.6.3"
   }
 }

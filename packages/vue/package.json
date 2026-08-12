@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@eaw/core": "workspace:*"
@@ -16,7 +17,11 @@
     "vue": ">=3.2.0"
   },
   "devDependencies": {
-    "vue": "^3.4.0",
-    "typescript": "^5.9.2"
+    "vue": "^3.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.9",
+    "jsdom": "^25.0.1",
+    "@testing-library/vue": "^8.1.0",
+    "@testing-library/jest-dom": "^6.6.3"
   }
 }
