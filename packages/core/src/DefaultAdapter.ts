@@ -3,6 +3,8 @@ import {
   EmailAdapter,
   EmailPayload,
   BulkEmailPayload,
+  BulkProgressHandler,
+  BulkSendResult,
   EmailLogEntry,
   MailboxItem,
   EmailTemplate,
@@ -34,21 +36,40 @@ export const createDefaultAdapter = (client: ApiClient): EmailAdapter => ({
     return client.post<EmailLogEntry>("/emails/send", payload);
   },
 
-  sendBulk: (payload: BulkEmailPayload) => {
+  sendBulk: async (
+    payload: BulkEmailPayload,
+    onProgress?: BulkProgressHandler
+  ) => {
     if (!payload.recipients?.length) {
       throw new ValidationError(
         "recipients must contain at least one address",
         "recipients"
       );
     }
-    const invalid = payload.recipients.filter((r) => !isValidEmail(r));
+    const invalid = payload.recipients
+      .map((r) => r.email)
+      .filter((email) => !isValidEmail(email));
     if (invalid.length) {
       throw new ValidationError(
         `Invalid recipient email(s): ${invalid.join(", ")}`,
         "recipients"
       );
     }
-    return client.post<EmailLogEntry[]>("/emails/send-bulk", payload);
+
+    const total = payload.recipients.length;
+    // Reference backend (EduCRM's /send-bulk/) is a single blocking POST —
+    // the whole batch is processed server-side and only one final result
+    // comes back, so there's no real per-item progress yet. We still
+    // signal start (0, total) and finish (n, total) so wrapper UIs that
+    // already wire a progress indicator to onProgress keep working
+    // unchanged if a future backend adds real streaming progress.
+    onProgress?.(0, total);
+    const result = await client.post<BulkSendResult>(
+      "/emails/send-bulk",
+      payload
+    );
+    onProgress?.(result.sentCount + result.failedCount, total);
+    return result;
   },
 
   mailbox: (params?: ListParams) =>

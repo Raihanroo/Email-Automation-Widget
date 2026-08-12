@@ -1,5 +1,7 @@
 export * from "./types";
 export * from "./errors";
+export * from "./Compose";
+export * from "./BulkCompose";
 export { ApiClient } from "./ApiClient";
 export type { ApiClientOptions } from "./ApiClient";
 export { createDefaultAdapter } from "./DefaultAdapter";

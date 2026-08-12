@@ -60,9 +60,52 @@ export interface EmailPayload {
   attachments?: EmailAttachment[];
 }
 
-export interface BulkEmailPayload extends Omit<EmailPayload, "to"> {
-  recipients: string[];
+/**
+ * A single bulk recipient. `placeholderData` is optional per-recipient
+ * personalization (e.g. {{name}}) — omit it when every recipient should
+ * get the exact same body. Top-level `placeholders` on BulkEmailPayload
+ * (inherited from EmailPayload) still works as shared defaults; a key
+ * present in a recipient's own placeholderData overrides that default
+ * for that recipient only.
+ */
+export interface BulkRecipient {
+  email: string;
+  placeholderData?: Record<string, string>;
 }
+
+export interface BulkEmailPayload extends Omit<EmailPayload, "to"> {
+  recipients: BulkRecipient[];
+}
+
+/** Per-recipient failure reported back from a bulk send. */
+export interface BulkSendError {
+  email: string;
+  error: string;
+}
+
+/**
+ * Result of a bulk send. Mirrors EduCRM's send-bulk response shape
+ * (sent_count/failed_count/errors) rather than returning one
+ * EmailLogEntry per recipient — bulk batches can be large, and the
+ * reference backend never sent full per-recipient logs back to the
+ * client for this endpoint.
+ */
+export interface BulkSendResult {
+  sentCount: number;
+  failedCount: number;
+  errors: BulkSendError[];
+}
+
+/**
+ * Optional progress callback for sendBulk. The current reference
+ * backend is a single blocking POST (whole batch processed
+ * server-side, one final result back — no client-side progress
+ * streaming), so today this only ever fires at the start (0, total)
+ * and once more at the end (total, total). The signature is kept
+ * future-proof so that if a backend later adds polling/SSE progress,
+ * only the adapter's internals change — no wrapper UI code has to.
+ */
+export type BulkProgressHandler = (sent: number, total: number) => void;
 
 export type EmailStatus = "queued" | "sent" | "failed" | "opened" | "bounced";
 
@@ -126,7 +169,10 @@ export interface PaginatedResult<T> {
 
 export interface EmailAdapter {
   sendEmail: (payload: EmailPayload) => Promise<EmailLogEntry>;
-  sendBulk: (payload: BulkEmailPayload) => Promise<EmailLogEntry[]>;
+  sendBulk: (
+    payload: BulkEmailPayload,
+    onProgress?: BulkProgressHandler
+  ) => Promise<BulkSendResult>;
   mailbox: (params?: ListParams) => Promise<PaginatedResult<MailboxItem>>;
   logs: (params?: ListParams) => Promise<PaginatedResult<EmailLogEntry>>;
   analytics: (params?: {

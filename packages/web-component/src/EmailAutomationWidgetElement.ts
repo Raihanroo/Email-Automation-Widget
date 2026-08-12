@@ -90,7 +90,12 @@ export class EmailAutomationWidgetElement extends LitElement {
     super.connectedCallback();
     this.rebuildAdapter();
     this.applyThemeVars();
-    if (this.mode === "mailbox") this.loadMailbox();
+    // NOTE: don't also call `this.loadMailbox()` here when mode is
+    // "mailbox" — Lit's `updated()` lifecycle already fires on the
+    // element's first update pass (attribute-derived properties count
+    // as "changed" on that first pass too), and its `changed.has("mode")`
+    // branch below calls `loadMailbox()`. Calling it here as well fired
+    // the request twice on initial mount.
   }
 
   updated(changed: PropertyValues): void {

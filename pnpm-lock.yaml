@@ -223,8 +223,8 @@ importers:
   packages/angular:
     dependencies:
       '@eaw/core':
-        specifier: file:../core
-        version: file:packages/core
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@analogjs/vite-plugin-angular':
         specifier: ^2.6.4
@@ -274,6 +274,9 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.5.1)(jsdom@25.0.1)
 
   packages/preact:
     dependencies:
@@ -371,6 +374,15 @@ importers:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^4.0.0
         version: 4.0.0(svelte@5.0.0)(vite@5.4.10)
+      '@testing-library/jest-dom':
+        specifier: ^6.6.3
+        version: 6.6.3
+      '@testing-library/svelte':
+        specifier: ^5.2.6
+        version: 5.2.6(svelte@5.0.0)(vite@5.4.10)(vitest@2.1.9)
+      jsdom:
+        specifier: ^25.0.1
+        version: 25.0.1
       svelte:
         specifier: ^5.0.0
         version: 5.0.0
@@ -380,6 +392,9 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.5.1)(jsdom@25.0.1)
 
   packages/vue:
     dependencies:
@@ -415,9 +430,21 @@ importers:
         specifier: ^3.3.3
         version: 3.3.3
     devDependencies:
+      '@testing-library/dom':
+        specifier: ^10.4.0
+        version: 10.4.1
+      '@testing-library/jest-dom':
+        specifier: ^6.6.3
+        version: 6.6.3
+      jsdom:
+        specifier: ^25.0.1
+        version: 25.0.1
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.5.1)(jsdom@25.0.1)
 
 packages:
 
@@ -6181,6 +6208,25 @@ packages:
       '@types/react-dom': 18.2.7
       react: 18.2.0
       react-dom: 18.2.0(react@18.2.0)
+    dev: true
+
+  /@testing-library/svelte@5.2.6(svelte@5.0.0)(vite@5.4.10)(vitest@2.1.9):
+    resolution: {integrity: sha512-1Y8cEg/BtV4J6g9irkY0ksz+ueDFYLiikjTLiqvQPkOUeDzR4gg2zECBf8yrOrCy3e2TAOYMcaysFa0bQMyk1w==}
+    engines: {node: '>= 10'}
+    peerDependencies:
+      svelte: ^3 || ^4 || ^5 || ^5.0.0-next.0
+      vite: '*'
+      vitest: '*'
+    peerDependenciesMeta:
+      vite:
+        optional: true
+      vitest:
+        optional: true
+    dependencies:
+      '@testing-library/dom': 10.4.1
+      svelte: 5.0.0
+      vite: 5.4.10(@types/node@20.5.1)
+      vitest: 2.1.9(@types/node@20.5.1)(jsdom@25.0.1)
     dev: true
 
   /@testing-library/vue@8.1.0(@vue/compiler-dom@3.5.41)(vue@3.5.0):
@@ -14870,9 +14916,3 @@ packages:
   /zone.js@0.15.1:
     resolution: {integrity: sha512-XE96n56IQpJM7NAoXswY3XRLcWFW83xe0BiAOeMD7K5k5xecOeul3Qcpx6GqEeeHNkW5DWL5zOyTbEfB4eti8w==}
     dev: true
-
-  file:packages/core:
-    resolution: {directory: packages/core, type: directory}
-    name: '@eaw/core'
-    version: 1.0.0
-    dev: false

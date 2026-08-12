@@ -46,7 +46,8 @@ export function isComposeFormValid(errors: ComposeValidationErrors): boolean {
   return Object.keys(errors).length === 0;
 }
 
-function splitAddressList(value: string): string[] | undefined {
+/** Exported so BulkCompose.ts can reuse the exact same CC/BCC parsing rule. */
+export function splitAddressList(value: string): string[] | undefined {
   const items = value
     .split(",")
     .map((item) => item.trim())

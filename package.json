@@ -12,7 +12,8 @@
     "commit": "git-cz",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "turbo run build && changeset publish"
+    "release": "turbo run build && changeset publish",
+    "test": "turbo run test"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.7",
