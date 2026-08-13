@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { EmailAutomationWidget } from "./EmailAutomationWidget";
 
 /**
@@ -71,6 +72,103 @@ describe("EmailAutomationWidget (dashboard mode)", () => {
       "data-layout",
       "embedded"
     );
+  });
+});
+
+describe("EmailAutomationWidget (composer mode)", () => {
+  it("renders empty to/cc/bcc/subject/body fields with no validation errors shown initially", () => {
+    render(<EmailAutomationWidget mode="composer" />);
+    expect(screen.getByLabelText("To")).toHaveValue("");
+    expect(screen.getByLabelText("Subject")).toHaveValue("");
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+    expect(screen.queryByText("Recipient is required")).not.toBeInTheDocument();
+  });
+
+  it("shows field-level validation errors after the user edits and leaves fields empty, without calling the network", async () => {
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(<EmailAutomationWidget mode="composer" />);
+    const subjectInput = screen.getByLabelText("Subject");
+    await userEvent.type(subjectInput, "x");
+    await userEvent.clear(subjectInput);
+
+    expect(await screen.findByText("Subject is required")).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("blocks submit and shows errors for a fully empty form", async () => {
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(<EmailAutomationWidget mode="composer" />);
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(
+      await screen.findByText("Recipient is required")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Subject is required")).toBeInTheDocument();
+    expect(screen.getByText("Message body is required")).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("submits a valid form, calls onEmailSent, shows a success message, and resets the form", async () => {
+    mockFetchOnce(200, {
+      id: "log_1",
+      to: "user@example.com",
+      subject: "Hello",
+      status: "sent",
+      sentAt: new Date().toISOString(),
+    });
+    const onEmailSent = vi.fn();
+
+    render(
+      <EmailAutomationWidget
+        mode="composer"
+        baseURL="/api"
+        onEmailSent={onEmailSent}
+      />
+    );
+
+    await userEvent.type(screen.getByLabelText("To"), "user@example.com");
+    await userEvent.type(screen.getByLabelText("Subject"), "Hello");
+    await userEvent.type(screen.getByLabelText("Message"), "Test message");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(
+      await screen.findByText(/Sent to user@example.com/)
+    ).toBeInTheDocument();
+    expect(onEmailSent).toHaveBeenCalledTimes(1);
+    expect(onEmailSent.mock.calls[0][0]).toMatchObject({
+      id: "log_1",
+      status: "sent",
+    });
+    // Form resets after a successful send.
+    expect(screen.getByLabelText("To")).toHaveValue("");
+    expect(screen.getByLabelText("Subject")).toHaveValue("");
+  });
+
+  it("shows a server error message and calls onError without resetting the form when the send fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "Server exploded" }),
+      text: async () => "Server exploded",
+    }) as unknown as typeof fetch;
+    const onError = vi.fn();
+
+    render(<EmailAutomationWidget mode="composer" onError={onError} />);
+    await userEvent.type(screen.getByLabelText("To"), "user@example.com");
+    await userEvent.type(screen.getByLabelText("Subject"), "Hello");
+    await userEvent.type(screen.getByLabelText("Message"), "Test message");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(
+      await screen.findByText(/API request failed with status 500/)
+    ).toBeInTheDocument();
+    expect(onError).toHaveBeenCalledTimes(1);
+    // Form is NOT reset after a failed send, so the user doesn't lose their draft.
+    expect(screen.getByLabelText("To")).toHaveValue("user@example.com");
   });
 });
 
@@ -148,5 +246,136 @@ describe("EmailAutomationWidget (mailbox mode)", () => {
     expect(
       (init.headers as Record<string, string>)["Authorization"]
     ).toBeUndefined();
+  });
+});
+
+describe("EmailAutomationWidget (bulk-composer mode)", () => {
+  it("parses a pasted recipient list live and shows the valid count", async () => {
+    const user = userEvent.setup();
+    render(<EmailAutomationWidget mode="bulk-composer" />);
+
+    await user.type(
+      screen.getByPlaceholderText(/jane@example.com/),
+      "jane@example.com, not-an-email, john@example.com"
+    );
+
+    expect(
+      await screen.findByText(/2 valid recipients ready/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Skipped 1 invalid address: not-an-email/)
+    ).toBeInTheDocument();
+  });
+
+  it("parses an uploaded CSV, surfaces detected columns, and offers placeholder chips", async () => {
+    const user = userEvent.setup();
+    render(<EmailAutomationWidget mode="bulk-composer" />);
+
+    await user.click(screen.getByRole("button", { name: "Upload CSV" }));
+
+    const csv =
+      "Email,firstName,company\njane@example.com,Jane,Acme\njohn@example.com,John,Globex\n";
+    const file = new File([csv], "recipients.csv", { type: "text/csv" });
+    const input = document.getElementById("eaw-bulk-csv") as HTMLInputElement;
+    await user.upload(input, file);
+
+    expect(
+      await screen.findByText(
+        /recipients.csv — 2 recipients found · columns: firstName, company/
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "+ {{firstName}}" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "+ {{company}}" })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "+ {{firstName}}" }));
+    expect(screen.getByLabelText("Message")).toHaveValue("{{firstName}}");
+  });
+
+  it("shows a clear error when the uploaded CSV has no Email column", async () => {
+    const user = userEvent.setup();
+    render(<EmailAutomationWidget mode="bulk-composer" />);
+
+    await user.click(screen.getByRole("button", { name: "Upload CSV" }));
+    const file = new File(["firstName\nJane\n"], "no-email.csv", {
+      type: "text/csv",
+    });
+    const input = document.getElementById("eaw-bulk-csv") as HTMLInputElement;
+    await user.upload(input, file);
+
+    expect(
+      await screen.findByText(/No "Email" column found in this CSV/)
+    ).toBeInTheDocument();
+  });
+
+  it("switching between paste and CSV clears whatever the other method had parsed", async () => {
+    const user = userEvent.setup();
+    render(<EmailAutomationWidget mode="bulk-composer" />);
+
+    await user.type(
+      screen.getByPlaceholderText(/jane@example.com/),
+      "jane@example.com"
+    );
+    expect(
+      await screen.findByText(/1 valid recipient ready/)
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upload CSV" }));
+    expect(screen.queryByText(/recipients? ready/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Paste list" }));
+    expect(screen.getByPlaceholderText(/jane@example.com/)).toHaveValue("");
+  });
+
+  it("submits the bulk form and reports the send result", async () => {
+    mockFetchOnce(200, { sentCount: 2, failedCount: 0, errors: [] });
+    const user = userEvent.setup();
+    const onBulkSent = vi.fn();
+    render(
+      <EmailAutomationWidget
+        mode="bulk-composer"
+        baseURL="/api"
+        onBulkSent={onBulkSent}
+      />
+    );
+
+    await user.type(
+      screen.getByPlaceholderText(/jane@example.com/),
+      "jane@example.com, john@example.com"
+    );
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Message"), "Hi there");
+    await user.click(
+      screen.getByRole("button", { name: /Send to 2 recipients/ })
+    );
+
+    await waitFor(() => expect(onBulkSent).toHaveBeenCalledTimes(1));
+    expect(onBulkSent).toHaveBeenCalledWith({
+      sentCount: 2,
+      failedCount: 0,
+      errors: [],
+    });
+    expect(await screen.findByText("Sent 2 of 2.")).toBeInTheDocument();
+    // Form resets after a successful send.
+    expect(screen.getByPlaceholderText(/jane@example.com/)).toHaveValue("");
+  });
+
+  it("blocks submit and shows a field error when there are no valid recipients", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    render(<EmailAutomationWidget mode="bulk-composer" />);
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Message"), "Hi there");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText("Add at least one valid recipient")
+    ).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
