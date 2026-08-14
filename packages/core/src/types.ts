@@ -195,7 +195,7 @@ export interface EmailAdapter {
 export type WidgetMode =
   | "dashboard"
   | "composer"
-  | "bulk-composer"
+  | "bulk"
   | "mailbox"
   | "logs"
   | "templates"
@@ -209,7 +209,7 @@ export interface WidgetProps {
   baseURL?: string;
   token?: string;
   onEmailSent?: (entry: EmailLogEntry) => void;
-  /** Fired when mode="bulk-composer" finishes a submitBulkComposeForm call. */
+  /** Fired once a bulk send finishes (success or partial failure). */
   onBulkSent?: (result: BulkSendResult) => void;
   onError?: (error: Error) => void;
 }

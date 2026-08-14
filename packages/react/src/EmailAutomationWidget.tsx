@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ApiClient,
   createDefaultAdapter,
@@ -11,18 +11,43 @@ import {
   isComposeFormValid,
   submitComposeForm,
   ComposeFormState,
-  BulkComposeFormState,
-  BulkRecipient,
-  BulkSendResult,
   emptyBulkComposeForm,
   parseRecipients,
   parseRecipientsFromCsv,
   validateBulkComposeForm,
   isBulkComposeFormValid,
   submitBulkComposeForm,
+  BulkComposeFormState,
+  BulkSendResult,
+  CsvRecipientParseResult,
 } from "@eaw/core";
 
-type BulkRecipientMode = "paste" | "csv";
+type BulkRecipientSource = "paste" | "csv";
+
+// Stable references so a CSV-mode render with no file loaded yet
+// doesn't create a brand-new empty array on every render — that would
+// break the useEffect below that depends on bulkRecipients/invalidEntries
+// (new array identity every render → effect fires every render → infinite
+// re-render loop).
+const EMPTY_RECIPIENTS: never[] = [];
+const EMPTY_INVALID_ENTRIES: never[] = [];
+
+/**
+ * Reads a File's text content via FileReader rather than the newer
+ * `File.prototype.text()` — the latter isn't reliably implemented
+ * across every jsdom version used in test environments, while
+ * FileReader has been supported for a long time in both real browsers
+ * and jsdom.
+ */
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error("Failed to read file"));
+    reader.readAsText(file);
+  });
+}
 
 export const EmailAutomationWidget: React.FC<WidgetProps> = ({
   mode = "dashboard",
@@ -50,20 +75,9 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
     null
   );
 
-  // --- Bulk composer state (mode="bulk-composer") ---
   const [bulkForm, setBulkForm] = useState<BulkComposeFormState>(
     emptyBulkComposeForm()
   );
-  const [recipientMode, setRecipientMode] =
-    useState<BulkRecipientMode>("paste");
-  const [parsedRecipients, setParsedRecipients] = useState<BulkRecipient[]>([]);
-  const [invalidEntries, setInvalidEntries] = useState<string[]>([]);
-  const [csvFileName, setCsvFileName] = useState<string | null>(null);
-  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [csvError, setCsvError] = useState<string | null>(null);
-  const [bulkErrors, setBulkErrors] = useState<
-    ReturnType<typeof validateBulkComposeForm>
-  >({});
   const [bulkTouched, setBulkTouched] = useState(false);
   const [bulkSending, setBulkSending] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{
@@ -71,8 +85,47 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
     total: number;
   } | null>(null);
   const [bulkResult, setBulkResult] = useState<BulkSendResult | null>(null);
-  const [bulkResultError, setBulkResultError] = useState<string | null>(null);
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const [bulkErrorMessage, setBulkErrorMessage] = useState<string | null>(null);
+
+  // Two ways to supply recipients for a bulk send: paste a plain list,
+  // or upload a CSV (which also carries personalization columns). Only
+  // one is "active" at a time — switching sources doesn't try to merge
+  // the two, to avoid surprising a user who pasted a list, then also
+  // uploaded a CSV, into wondering which recipients actually get used.
+  const [bulkRecipientSource, setBulkRecipientSource] =
+    useState<BulkRecipientSource>("paste");
+  const [csvFileName, setCsvFileName] = useState<string | null>(null);
+  const [csvParseResult, setCsvParseResult] =
+    useState<CsvRecipientParseResult | null>(null);
+  const [csvReadError, setCsvReadError] = useState<string | null>(null);
+
+  // Recipients are re-parsed live from the raw textarea on every
+  // keystroke (parseRecipients is cheap — just splitting/validating
+  // strings), so invalid-entry warnings and the recipient count update
+  // immediately instead of only at submit time.
+  const pasteParsed = useMemo(
+    () => parseRecipients(bulkForm.recipientsRaw),
+    [bulkForm.recipientsRaw]
+  );
+
+  const bulkRecipients = useMemo(
+    () =>
+      bulkRecipientSource === "csv"
+        ? csvParseResult?.recipients ?? EMPTY_RECIPIENTS
+        : pasteParsed.recipients,
+    [bulkRecipientSource, csvParseResult, pasteParsed.recipients]
+  );
+  const bulkInvalidEntries = useMemo(
+    () =>
+      bulkRecipientSource === "csv"
+        ? csvParseResult?.invalidEntries ?? EMPTY_INVALID_ENTRIES
+        : pasteParsed.invalidEntries,
+    [bulkRecipientSource, csvParseResult, pasteParsed.invalidEntries]
+  );
+
+  const [bulkErrors, setBulkErrors] = useState<
+    ReturnType<typeof validateBulkComposeForm>
+  >({});
 
   const theme = useMemo(() => resolveTheme(themeOverride), [themeOverride]);
   const cssVars = useMemo(
@@ -122,150 +175,53 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
     setComposeErrors(validateComposeForm(composeForm));
   }, [composeForm, composeTouched]);
 
-  // Same touched-gated live validation pattern as the single composer.
   useEffect(() => {
     if (!bulkTouched) return;
-    setBulkErrors(validateBulkComposeForm(bulkForm, parsedRecipients));
-  }, [bulkForm, parsedRecipients, bulkTouched]);
-
-  function switchRecipientMode(next: BulkRecipientMode) {
-    setRecipientMode(next);
-    setBulkTouched(true);
-    setBulkResult(null);
-    setBulkResultError(null);
-    // Each input method owns its own recipient list — switching clears
-    // whatever the other method had parsed so a stale CSV upload can't
-    // silently ride along with a pasted list (or vice versa).
-    setParsedRecipients([]);
-    setInvalidEntries([]);
-    setCsvError(null);
-    if (next === "paste") {
-      setCsvFileName(null);
-      setCsvHeaders([]);
-    } else {
-      setBulkForm((prev) => ({ ...prev, recipientsRaw: "" }));
-    }
-  }
-
-  function handlePasteChange(value: string) {
-    setBulkTouched(true);
-    setBulkResult(null);
-    setBulkResultError(null);
-    setBulkForm((prev) => ({ ...prev, recipientsRaw: value }));
-    const { recipients, invalidEntries: bad } = parseRecipients(value);
-    setParsedRecipients(recipients);
-    setInvalidEntries(bad);
-  }
-
-  function handleCsvFile(file: File | null) {
-    setBulkTouched(true);
-    setBulkResult(null);
-    setBulkResultError(null);
-    setCsvFileName(file?.name ?? null);
-    if (!file) {
-      setParsedRecipients([]);
-      setInvalidEntries([]);
-      setCsvHeaders([]);
-      setCsvError(null);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = typeof reader.result === "string" ? reader.result : "";
-      const result = parseRecipientsFromCsv(text);
-      setParsedRecipients(result.recipients);
-      setInvalidEntries(result.invalidEntries);
-      setCsvHeaders(
-        result.headers.filter(
-          (h) =>
-            h !== "email" &&
-            h.toLowerCase() !== "email" &&
-            h.toLowerCase() !== "email address"
-        )
-      );
-      setCsvError(
-        result.missingEmailColumn
-          ? 'No "Email" column found in this CSV — add one (or "Email Address") and re-upload.'
-          : null
-      );
-    };
-    reader.onerror = () => {
-      setCsvError("Couldn't read that file — try re-exporting it as CSV.");
-    };
-    reader.readAsText(file);
-  }
-
-  function insertPlaceholder(header: string) {
-    const token = `{{${header}}}`;
-    const el = bodyRef.current;
-    if (el) {
-      const start = el.selectionStart ?? bulkForm.body.length;
-      const end = el.selectionEnd ?? bulkForm.body.length;
-      const next =
-        bulkForm.body.slice(0, start) + token + bulkForm.body.slice(end);
-      setBulkForm((prev) => ({ ...prev, body: next }));
-      requestAnimationFrame(() => {
-        el.focus();
-        el.setSelectionRange(start + token.length, start + token.length);
-      });
-    } else {
-      setBulkForm((prev) => ({ ...prev, body: prev.body + token }));
-    }
-    setBulkTouched(true);
-  }
-
-  function updateBulkField(
-    field: "cc" | "bcc" | "subject" | "body",
-    value: string
-  ) {
-    setBulkTouched(true);
-    setBulkResult(null);
-    setBulkResultError(null);
-    setBulkForm((prev) => ({ ...prev, [field]: value }));
-  }
-
-  async function handleBulkSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setBulkTouched(true);
-    if (csvError) return;
-    const errors = validateBulkComposeForm(bulkForm, parsedRecipients);
-    setBulkErrors(errors);
-    if (!isBulkComposeFormValid(errors)) return;
-
-    setBulkSending(true);
-    setBulkResult(null);
-    setBulkResultError(null);
-    setBulkProgress({ sent: 0, total: parsedRecipients.length });
-    try {
-      const result = await submitBulkComposeForm(
-        adapter,
-        bulkForm,
-        parsedRecipients,
-        (sent, total) => setBulkProgress({ sent, total })
-      );
-      onBulkSent?.(result);
-      setBulkResult(result);
-      setBulkForm(emptyBulkComposeForm());
-      setParsedRecipients([]);
-      setInvalidEntries([]);
-      setCsvFileName(null);
-      setCsvHeaders([]);
-      setBulkTouched(false);
-      setBulkErrors({});
-    } catch (err) {
-      const e2 =
-        err instanceof Error ? err : new Error("Failed to send bulk email");
-      setBulkResultError(e2.message);
-      onError?.(e2);
-    } finally {
-      setBulkSending(false);
-    }
-  }
+    setBulkErrors(validateBulkComposeForm(bulkForm, bulkRecipients));
+  }, [bulkForm, bulkRecipients, bulkTouched]);
 
   function updateComposeField(field: keyof ComposeFormState, value: string) {
     setComposeTouched(true);
     setSendResultMessage(null);
     setComposeForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateBulkField(field: keyof BulkComposeFormState, value: string) {
+    setBulkTouched(true);
+    setBulkResult(null);
+    setBulkErrorMessage(null);
+    setBulkForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function switchBulkRecipientSource(source: BulkRecipientSource) {
+    setBulkRecipientSource(source);
+    setBulkTouched(true);
+    setBulkResult(null);
+    setBulkErrorMessage(null);
+  }
+
+  async function handleCsvFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    setBulkTouched(true);
+    setBulkResult(null);
+    setBulkErrorMessage(null);
+
+    if (!file) {
+      setCsvFileName(null);
+      setCsvParseResult(null);
+      setCsvReadError(null);
+      return;
+    }
+
+    setCsvFileName(file.name);
+    try {
+      const text = await readFileAsText(file);
+      setCsvReadError(null);
+      setCsvParseResult(parseRecipientsFromCsv(text));
+    } catch {
+      setCsvReadError("Could not read that file. Please upload a CSV file.");
+      setCsvParseResult(null);
+    }
   }
 
   async function handleComposeSubmit(e: React.FormEvent) {
@@ -293,6 +249,42 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
     }
   }
 
+  async function handleBulkSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBulkTouched(true);
+    const errors = validateBulkComposeForm(bulkForm, bulkRecipients);
+    setBulkErrors(errors);
+    if (!isBulkComposeFormValid(errors)) return;
+
+    setBulkSending(true);
+    setBulkResult(null);
+    setBulkErrorMessage(null);
+    setBulkProgress({ sent: 0, total: bulkRecipients.length });
+    try {
+      const result = await submitBulkComposeForm(
+        adapter,
+        bulkForm,
+        bulkRecipients,
+        (sent, total) => setBulkProgress({ sent, total })
+      );
+      onBulkSent?.(result);
+      setBulkResult(result);
+      setBulkForm(emptyBulkComposeForm());
+      setBulkTouched(false);
+      setBulkErrors({});
+      setCsvFileName(null);
+      setCsvParseResult(null);
+      setCsvReadError(null);
+    } catch (err) {
+      const e2 =
+        err instanceof Error ? err : new Error("Failed to send bulk email");
+      setBulkErrorMessage(e2.message);
+      onError?.(e2);
+    } finally {
+      setBulkSending(false);
+    }
+  }
+
   const inputStyle: React.CSSProperties = {
     width: "100%",
     boxSizing: "border-box",
@@ -317,36 +309,6 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
     marginTop: "-8px",
     marginBottom: "12px",
   };
-  const helpTextStyle: React.CSSProperties = {
-    fontSize: "12px",
-    color: "var(--eaw-color-text-secondary)",
-    margin: "0 0 10px",
-  };
-  const chipButtonStyle: React.CSSProperties = {
-    fontSize: "12px",
-    padding: "3px 8px",
-    borderRadius: "999px",
-    border: "1px solid var(--eaw-color-border)",
-    background: "var(--eaw-color-bg)",
-    color: "var(--eaw-color-text-primary)",
-    fontFamily: "var(--eaw-font-family)",
-    cursor: "pointer",
-  };
-  function tabButtonStyle(active: boolean): React.CSSProperties {
-    return {
-      padding: "6px 12px",
-      borderRadius: "var(--eaw-radius)",
-      border: `1px solid ${
-        active ? "var(--eaw-color-primary)" : "var(--eaw-color-border)"
-      }`,
-      background: active ? "var(--eaw-color-primary)" : "var(--eaw-color-bg)",
-      color: active ? "#fff" : "var(--eaw-color-text-primary)",
-      fontFamily: "var(--eaw-font-family)",
-      fontSize: "13px",
-      fontWeight: 600,
-      cursor: "pointer",
-    };
-  }
 
   return (
     <div
@@ -493,122 +455,168 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
         </form>
       )}
 
-      {mode === "bulk-composer" && (
+      {mode === "dashboard" && (
+        <p style={{ color: "var(--eaw-color-text-secondary)" }}>
+          Dashboard content coming in a later milestone.
+        </p>
+      )}
+
+      {mode === "bulk" && (
         <form onSubmit={handleBulkSubmit} noValidate>
-          <label style={labelStyle}>Recipients</label>
-          <div style={{ display: "flex", gap: "8px", margin: "4px 0 10px" }}>
+          <div
+            role="tablist"
+            aria-label="Recipient source"
+            style={{ display: "flex", gap: "4px", marginBottom: "10px" }}
+          >
             <button
               type="button"
-              onClick={() => switchRecipientMode("paste")}
-              aria-pressed={recipientMode === "paste"}
-              style={tabButtonStyle(recipientMode === "paste")}
+              role="tab"
+              aria-selected={bulkRecipientSource === "paste"}
+              onClick={() => switchBulkRecipientSource("paste")}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "var(--eaw-radius)",
+                border: "1px solid var(--eaw-color-border)",
+                background:
+                  bulkRecipientSource === "paste"
+                    ? "var(--eaw-color-primary)"
+                    : "var(--eaw-color-bg)",
+                color:
+                  bulkRecipientSource === "paste"
+                    ? "#fff"
+                    : "var(--eaw-color-text-primary)",
+                fontFamily: "var(--eaw-font-family)",
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
             >
               Paste list
             </button>
             <button
               type="button"
-              onClick={() => switchRecipientMode("csv")}
-              aria-pressed={recipientMode === "csv"}
-              style={tabButtonStyle(recipientMode === "csv")}
+              role="tab"
+              aria-selected={bulkRecipientSource === "csv"}
+              onClick={() => switchBulkRecipientSource("csv")}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "var(--eaw-radius)",
+                border: "1px solid var(--eaw-color-border)",
+                background:
+                  bulkRecipientSource === "csv"
+                    ? "var(--eaw-color-primary)"
+                    : "var(--eaw-color-bg)",
+                color:
+                  bulkRecipientSource === "csv"
+                    ? "#fff"
+                    : "var(--eaw-color-text-primary)",
+                fontFamily: "var(--eaw-font-family)",
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
             >
               Upload CSV
             </button>
           </div>
 
-          {recipientMode === "paste" && (
+          {bulkRecipientSource === "paste" && (
             <>
+              <label style={labelStyle} htmlFor="eaw-bulk-recipients">
+                Recipients
+              </label>
               <textarea
                 id="eaw-bulk-recipients"
-                style={{ ...inputStyle, minHeight: "90px", resize: "vertical" }}
+                style={{
+                  ...inputStyle,
+                  minHeight: "100px",
+                  resize: "vertical",
+                }}
                 value={bulkForm.recipientsRaw}
-                onChange={(e) => handlePasteChange(e.target.value)}
+                onChange={(e) =>
+                  updateBulkField("recipientsRaw", e.target.value)
+                }
                 placeholder={
-                  "jane@example.com, john@example.com\nor one per line"
+                  "one@example.com, two@example.com\nthree@example.com"
                 }
               />
-              <p style={helpTextStyle}>
-                Comma- or newline-separated addresses. No personalization —
-                every recipient gets the same body.
-              </p>
             </>
           )}
 
-          {recipientMode === "csv" && (
+          {bulkRecipientSource === "csv" && (
             <>
+              <label style={labelStyle} htmlFor="eaw-bulk-csv">
+                CSV file
+              </label>
               <input
                 id="eaw-bulk-csv"
+                style={{ ...inputStyle, padding: "6px 0" }}
                 type="file"
                 accept=".csv,text/csv"
-                onChange={(e) => handleCsvFile(e.target.files?.[0] ?? null)}
-                style={{ marginTop: "4px", marginBottom: "6px" }}
+                onChange={handleCsvFileChange}
               />
-              <p style={helpTextStyle}>
-                Needs an "Email" column. Any other column (e.g. firstName,
-                company) becomes a per-recipient placeholder — insert it into
-                the message below as {"{{"}columnName{"}}"}.
+              <p
+                style={{
+                  margin: "-8px 0 4px",
+                  fontSize: "12px",
+                  color: "var(--eaw-color-text-secondary)",
+                }}
+              >
+                First row must be a header row. A column named "email" (or
+                "email address") is used as the recipient; every other column
+                becomes a personalization placeholder, e.g.{" "}
+                <code>{"{{name}}"}</code>.
               </p>
-              {csvFileName && !csvError && (
+              {csvFileName && (
                 <p
                   style={{
-                    ...helpTextStyle,
-                    color: "var(--eaw-color-text-primary)",
+                    margin: "0 0 4px",
+                    fontSize: "12px",
+                    color: "var(--eaw-color-text-secondary)",
                   }}
                 >
-                  {csvFileName} — {parsedRecipients.length} recipient
-                  {parsedRecipients.length === 1 ? "" : "s"} found
-                  {csvHeaders.length > 0 && (
-                    <> · columns: {csvHeaders.join(", ")}</>
-                  )}
+                  Loaded: {csvFileName}
+                  {csvParseResult &&
+                    !csvParseResult.missingEmailColumn &&
+                    ` — columns: ${csvParseResult.headers.join(", ")}`}
                 </p>
               )}
-              {csvHeaders.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "6px",
-                    marginBottom: "10px",
-                  }}
-                >
-                  {csvHeaders.map((header) => (
-                    <button
-                      key={header}
-                      type="button"
-                      onClick={() => insertPlaceholder(header)}
-                      style={chipButtonStyle}
-                      title={`Insert {{${header}}} into the message`}
-                    >
-                      + {`{{${header}}}`}
-                    </button>
-                  ))}
-                </div>
+              {csvReadError && <p style={fieldErrorStyle}>{csvReadError}</p>}
+              {csvParseResult?.missingEmailColumn && (
+                <p style={fieldErrorStyle}>
+                  No "email" column found
+                  {csvParseResult.headers.length > 0
+                    ? ` — detected columns: ${csvParseResult.headers.join(
+                        ", "
+                      )}`
+                    : ""}
+                  . Add an "email" (or "email address") column and re-upload.
+                </p>
               )}
-              {csvError && <p style={fieldErrorStyle}>{csvError}</p>}
             </>
           )}
 
-          {invalidEntries.length > 0 && (
+          <p
+            style={{
+              margin: "-8px 0 12px",
+              fontSize: "12px",
+              color: "var(--eaw-color-text-secondary)",
+            }}
+          >
+            {bulkRecipients.length} valid recipient
+            {bulkRecipients.length === 1 ? "" : "s"}
+          </p>
+          {bulkInvalidEntries.length > 0 && (
             <p style={fieldErrorStyle}>
-              Skipped {invalidEntries.length} invalid address
-              {invalidEntries.length === 1 ? "" : "es"}:{" "}
-              {invalidEntries.slice(0, 5).join(", ")}
-              {invalidEntries.length > 5 ? ", …" : ""}
+              Ignoring {bulkInvalidEntries.length} invalid address
+              {bulkInvalidEntries.length === 1 ? "" : "es"}:{" "}
+              {bulkInvalidEntries.join(", ")}
             </p>
           )}
-
-          {recipientMode === "paste" && parsedRecipients.length > 0 && (
-            <p style={{ ...helpTextStyle, marginTop: "-6px" }}>
-              {parsedRecipients.length} valid recipient
-              {parsedRecipients.length === 1 ? "" : "s"} ready.
-            </p>
-          )}
-
-          {bulkErrors.recipients && (
+          {bulkErrors.recipients && !csvParseResult?.missingEmailColumn && (
             <p style={fieldErrorStyle}>{bulkErrors.recipients}</p>
           )}
 
           <label style={labelStyle} htmlFor="eaw-bulk-cc">
-            CC
+            CC (applies once to the whole batch)
           </label>
           <input
             id="eaw-bulk-cc"
@@ -616,11 +624,11 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
             type="text"
             value={bulkForm.cc}
             onChange={(e) => updateBulkField("cc", e.target.value)}
-            placeholder="cc1@example.com, cc2@example.com"
+            placeholder="manager@example.com"
           />
 
           <label style={labelStyle} htmlFor="eaw-bulk-bcc">
-            BCC
+            BCC (applies once to the whole batch)
           </label>
           <input
             id="eaw-bulk-bcc"
@@ -628,7 +636,7 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
             type="text"
             value={bulkForm.bcc}
             onChange={(e) => updateBulkField("bcc", e.target.value)}
-            placeholder="bcc1@example.com"
+            placeholder="audit@example.com"
           />
 
           <label style={labelStyle} htmlFor="eaw-bulk-subject">
@@ -650,7 +658,6 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
           </label>
           <textarea
             id="eaw-bulk-body"
-            ref={bodyRef}
             style={{ ...inputStyle, minHeight: "120px", resize: "vertical" }}
             value={bulkForm.body}
             onChange={(e) => updateBulkField("body", e.target.value)}
@@ -672,89 +679,47 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
               opacity: bulkSending ? 0.7 : 1,
             }}
           >
-            {bulkSending
-              ? "Sending…"
-              : parsedRecipients.length > 0
-              ? `Send to ${parsedRecipients.length} recipient${
-                  parsedRecipients.length === 1 ? "" : "s"
-                }`
-              : "Send"}
+            {bulkSending && bulkProgress
+              ? `Sending ${bulkProgress.sent} of ${bulkProgress.total}…`
+              : "Send to all"}
           </button>
 
-          {bulkSending && bulkProgress && (
-            <div style={{ marginTop: "12px" }}>
-              <div
-                style={{
-                  height: "6px",
-                  borderRadius: "999px",
-                  background: "var(--eaw-color-border)",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    width: bulkProgress.total
-                      ? `${Math.min(
-                          100,
-                          (bulkProgress.sent / bulkProgress.total) * 100
-                        )}%`
-                      : "0%",
-                    background: "var(--eaw-color-primary)",
-                    transition: "width 0.2s ease",
-                  }}
-                />
-              </div>
-              <p style={helpTextStyle}>
-                {bulkProgress.sent} / {bulkProgress.total}
-              </p>
-            </div>
+          {bulkErrorMessage && (
+            <p style={{ marginTop: "12px", color: "var(--eaw-color-danger)" }}>
+              {bulkErrorMessage}
+            </p>
           )}
 
           {bulkResult && (
             <div style={{ marginTop: "12px" }}>
               <p
                 style={{
-                  color: "var(--eaw-color-success, #16a34a)",
-                  margin: 0,
+                  color:
+                    bulkResult.failedCount === 0
+                      ? "var(--eaw-color-success, #16a34a)"
+                      : "var(--eaw-color-danger)",
                 }}
               >
-                Sent {bulkResult.sentCount} of{" "}
-                {bulkResult.sentCount + bulkResult.failedCount}.
-                {bulkResult.failedCount > 0 &&
-                  ` ${bulkResult.failedCount} failed.`}
+                Sent {bulkResult.sentCount}, failed {bulkResult.failedCount}.
               </p>
               {bulkResult.errors.length > 0 && (
-                <ul
-                  style={{
-                    margin: "6px 0 0",
-                    paddingLeft: "18px",
-                    color: "var(--eaw-color-danger)",
-                    fontSize: "13px",
-                  }}
-                >
-                  {bulkResult.errors.slice(0, 5).map((err) => (
-                    <li key={err.email}>
-                      {err.email}: {err.error}
+                <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {bulkResult.errors.map((e) => (
+                    <li
+                      key={e.email}
+                      style={{
+                        fontSize: "13px",
+                        color: "var(--eaw-color-danger)",
+                      }}
+                    >
+                      {e.email}: {e.error}
                     </li>
                   ))}
                 </ul>
               )}
             </div>
           )}
-
-          {bulkResultError && (
-            <p style={{ marginTop: "12px", color: "var(--eaw-color-danger)" }}>
-              {bulkResultError}
-            </p>
-          )}
         </form>
-      )}
-
-      {mode === "dashboard" && (
-        <p style={{ color: "var(--eaw-color-text-secondary)" }}>
-          Dashboard content coming in a later milestone.
-        </p>
       )}
     </div>
   );
