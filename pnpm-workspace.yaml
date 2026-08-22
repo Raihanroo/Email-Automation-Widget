@@ -6,3 +6,4 @@ packages:
 overrides:
   "@types/react": "18.2.15"
   "@types/react-dom": "18.2.7"
+  rxjs: "7.8.2"

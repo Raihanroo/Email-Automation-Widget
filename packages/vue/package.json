@@ -4,6 +4,9 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -23,5 +26,8 @@
     "jsdom": "^25.0.1",
     "@testing-library/vue": "^8.1.0",
     "@testing-library/jest-dom": "^6.6.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

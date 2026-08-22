@@ -466,6 +466,8 @@ export function EmailAutomationWidget(props: WidgetProps) {
           <div style={{ "margin-bottom": "12px", display: "flex", gap: "4px" }}>
             <button
               type="button"
+              role="tab"
+              aria-selected={bulkRecipientSource() === "paste"}
               onClick={() => switchBulkRecipientSource("paste")}
               style={{
                 padding: "6px 12px",
@@ -488,6 +490,8 @@ export function EmailAutomationWidget(props: WidgetProps) {
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={bulkRecipientSource() === "csv"}
               onClick={() => switchBulkRecipientSource("csv")}
               style={{
                 padding: "6px 12px",
@@ -531,26 +535,6 @@ export function EmailAutomationWidget(props: WidgetProps) {
                   )
                 }
               />
-              <p
-                style={{
-                  margin: "-8px 0 12px",
-                  "font-size": "12px",
-                  color: "var(--eaw-color-text-secondary)",
-                }}
-              >
-                {bulkRecipients().length} valid recipient
-                {bulkRecipients().length === 1 ? "" : "s"}
-              </p>
-              {bulkInvalidEntries().length > 0 && (
-                <p style={fieldErrorStyle}>
-                  Ignoring {bulkInvalidEntries().length} invalid address
-                  {bulkInvalidEntries().length === 1 ? "" : "es"}:{" "}
-                  {bulkInvalidEntries().join(", ")}
-                </p>
-              )}
-              {bulkErrors().recipients && (
-                <p style={fieldErrorStyle}>{bulkErrors().recipients}</p>
-              )}
             </>
           ) : (
             <>
@@ -603,6 +587,27 @@ export function EmailAutomationWidget(props: WidgetProps) {
                 </p>
               )}
             </>
+          )}
+
+          <p
+            style={{
+              margin: "-8px 0 12px",
+              "font-size": "12px",
+              color: "var(--eaw-color-text-secondary)",
+            }}
+          >
+            {bulkRecipients().length} valid recipient
+            {bulkRecipients().length === 1 ? "" : "s"}
+          </p>
+          {bulkInvalidEntries().length > 0 && (
+            <p style={fieldErrorStyle}>
+              Ignoring {bulkInvalidEntries().length} invalid address
+              {bulkInvalidEntries().length === 1 ? "" : "es"}:{" "}
+              {bulkInvalidEntries().join(", ")}
+            </p>
+          )}
+          {bulkErrors().recipients && (
+            <p style={fieldErrorStyle}>{bulkErrors().recipients}</p>
           )}
 
           <label style={labelStyle} for="eaw-bulk-cc">
@@ -707,7 +712,7 @@ export function EmailAutomationWidget(props: WidgetProps) {
               opacity: bulkSending() ? 0.7 : 1,
             }}
           >
-            {bulkSending() ? "Sending…" : "Send"}
+            {bulkSending() ? "Sending…" : "Send to all"}
           </button>
         </form>
       )}

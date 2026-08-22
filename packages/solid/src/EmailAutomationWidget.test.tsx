@@ -7,6 +7,11 @@ import { EmailAutomationWidget } from "./EmailAutomationWidget";
  * through Solid Testing Library. The wrapper builds its own ApiClient
  * internally (it does not accept an injected adapter), so the only seam
  * available for mocking network behaviour is `global.fetch`.
+ *
+ * NOTE: Solid Testing Library's `render()` takes a function that returns
+ * JSX, not a component reference plus a `{ props }` options object (that
+ * is the Svelte Testing Library pattern). Props must be passed as JSX
+ * attributes: `render(() => <EmailAutomationWidget mode="bulk" />)`.
  */
 
 function mockFetchOnce(status: number, body: unknown) {
@@ -37,7 +42,7 @@ describe("EmailAutomationWidget (dashboard mode)", () => {
     const fetchSpy = vi.fn();
     global.fetch = fetchSpy as unknown as typeof fetch;
 
-    render(EmailAutomationWidget, { props: { mode: "dashboard" } });
+    render(() => <EmailAutomationWidget mode="dashboard" />);
 
     expect(screen.getByText("Email Automation Widget")).toBeInTheDocument();
     expect(
@@ -47,24 +52,24 @@ describe("EmailAutomationWidget (dashboard mode)", () => {
   });
 
   it("defaults to dashboard mode when no mode prop is given", () => {
-    render(EmailAutomationWidget);
+    render(() => <EmailAutomationWidget />);
     expect(
       screen.getByText("Dashboard content coming in a later milestone.")
     ).toBeInTheDocument();
   });
 
   it("applies the resolved theme as CSS custom properties on the root element", () => {
-    const { container } = render(EmailAutomationWidget, {
-      props: { theme: { primary: "#0f0f0f" } },
-    });
+    const { container } = render(() => (
+      <EmailAutomationWidget theme={{ primary: "#0f0f0f" }} />
+    ));
     const root = container.querySelector(".eaw-root") as HTMLElement;
     expect(root.style.getPropertyValue("--eaw-color-primary")).toBe("#0f0f0f");
   });
 
   it("reflects the layout prop as a data attribute", () => {
-    const { container } = render(EmailAutomationWidget, {
-      props: { layout: "embedded" },
-    });
+    const { container } = render(() => (
+      <EmailAutomationWidget layout="embedded" />
+    ));
     expect(container.querySelector(".eaw-root")).toHaveAttribute(
       "data-layout",
       "embedded"
@@ -75,7 +80,7 @@ describe("EmailAutomationWidget (dashboard mode)", () => {
 describe("EmailAutomationWidget (mailbox mode)", () => {
   it("shows a loading state while the mailbox request is in flight", async () => {
     mockFetchPending();
-    render(EmailAutomationWidget, { props: { mode: "mailbox" } });
+    render(() => <EmailAutomationWidget mode="mailbox" />);
     expect(await screen.findByText("Loading mailbox…")).toBeInTheDocument();
   });
 
@@ -84,16 +89,14 @@ describe("EmailAutomationWidget (mailbox mode)", () => {
       items: [{ id: "m1", subject: "Welcome", from: "team@example.com" }],
       total: 1,
     });
-    render(EmailAutomationWidget, {
-      props: { mode: "mailbox", baseURL: "/api" },
-    });
+    render(() => <EmailAutomationWidget mode="mailbox" baseURL="/api" />);
     expect(await screen.findByText("Welcome")).toBeInTheDocument();
     expect(screen.getByText(/— team@example.com/)).toBeInTheDocument();
   });
 
   it('shows "No messages yet." when the mailbox is empty', async () => {
     mockFetchOnce(200, { items: [], total: 0 });
-    render(EmailAutomationWidget, { props: { mode: "mailbox" } });
+    render(() => <EmailAutomationWidget mode="mailbox" />);
     expect(await screen.findByText("No messages yet.")).toBeInTheDocument();
   });
 
@@ -106,7 +109,7 @@ describe("EmailAutomationWidget (mailbox mode)", () => {
     }) as unknown as typeof fetch;
 
     const onError = vi.fn();
-    render(EmailAutomationWidget, { props: { mode: "mailbox", onError } });
+    render(() => <EmailAutomationWidget mode="mailbox" onError={onError} />);
 
     await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(
@@ -116,9 +119,9 @@ describe("EmailAutomationWidget (mailbox mode)", () => {
 
   it("sends a Bearer Authorization header built from the token prop", async () => {
     mockFetchOnce(200, { items: [], total: 0 });
-    render(EmailAutomationWidget, {
-      props: { mode: "mailbox", baseURL: "/api", token: "secret-123" },
-    });
+    render(() => (
+      <EmailAutomationWidget mode="mailbox" baseURL="/api" token="secret-123" />
+    ));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
     const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect((init.headers as Record<string, string>)["Authorization"]).toBe(
@@ -132,7 +135,7 @@ describe("EmailAutomationWidget (composer mode)", () => {
     const fetchSpy = vi.fn();
     global.fetch = fetchSpy as unknown as typeof fetch;
 
-    render(EmailAutomationWidget, { props: { mode: "composer" } });
+    render(() => <EmailAutomationWidget mode="composer" />);
     await fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
     expect(
@@ -144,7 +147,7 @@ describe("EmailAutomationWidget (composer mode)", () => {
   });
 
   it("clears a field error live once the user fixes it", async () => {
-    render(EmailAutomationWidget, { props: { mode: "composer" } });
+    render(() => <EmailAutomationWidget mode="composer" />);
     const subjectInput = screen.getByLabelText("Subject");
 
     await fireEvent.click(screen.getByRole("button", { name: /send/i }));
@@ -160,7 +163,9 @@ describe("EmailAutomationWidget (composer mode)", () => {
     mockFetchOnce(200, { id: "e1", to: "user@example.com" });
     const onEmailSent = vi.fn();
 
-    render(EmailAutomationWidget, { props: { mode: "composer", onEmailSent } });
+    render(() => (
+      <EmailAutomationWidget mode="composer" onEmailSent={onEmailSent} />
+    ));
     await fireEvent.input(screen.getByLabelText("To"), {
       target: { value: "user@example.com" },
     });
@@ -187,7 +192,7 @@ describe("EmailAutomationWidget (composer mode)", () => {
     }) as unknown as typeof fetch;
     const onError = vi.fn();
 
-    render(EmailAutomationWidget, { props: { mode: "composer", onError } });
+    render(() => <EmailAutomationWidget mode="composer" onError={onError} />);
     await fireEvent.input(screen.getByLabelText("To"), {
       target: { value: "user@example.com" },
     });
@@ -208,7 +213,7 @@ describe("EmailAutomationWidget (composer mode)", () => {
 
 describe("EmailAutomationWidget (bulk mode — paste recipients)", () => {
   it("counts valid recipients live and dedupes case-insensitively", async () => {
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     const textarea = screen.getByLabelText("Recipients");
 
     await fireEvent.input(textarea, { target: { value: "a@x.com, b@x.com" } });
@@ -219,7 +224,7 @@ describe("EmailAutomationWidget (bulk mode — paste recipients)", () => {
   });
 
   it("warns about invalid entries without blocking the valid ones", async () => {
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     const textarea = screen.getByLabelText("Recipients");
 
     await fireEvent.input(textarea, {
@@ -235,7 +240,7 @@ describe("EmailAutomationWidget (bulk mode — paste recipients)", () => {
     const fetchSpy = vi.fn();
     global.fetch = fetchSpy as unknown as typeof fetch;
 
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     await fireEvent.click(screen.getByRole("button", { name: /send to all/i }));
 
     expect(
@@ -248,7 +253,7 @@ describe("EmailAutomationWidget (bulk mode — paste recipients)", () => {
     mockFetchOnce(200, { sentCount: 2, failedCount: 0, errors: [] });
     const onBulkSent = vi.fn();
 
-    render(EmailAutomationWidget, { props: { mode: "bulk", onBulkSent } });
+    render(() => <EmailAutomationWidget mode="bulk" onBulkSent={onBulkSent} />);
     await fireEvent.input(screen.getByLabelText("Recipients"), {
       target: { value: "a@x.com, b@x.com" },
     });
@@ -273,7 +278,7 @@ describe("EmailAutomationWidget (bulk mode — paste recipients)", () => {
     }) as unknown as typeof fetch;
     const onError = vi.fn();
 
-    render(EmailAutomationWidget, { props: { mode: "bulk", onError } });
+    render(() => <EmailAutomationWidget mode="bulk" onError={onError} />);
     await fireEvent.input(screen.getByLabelText("Recipients"), {
       target: { value: "a@x.com" },
     });
@@ -294,7 +299,7 @@ describe("EmailAutomationWidget (bulk mode — paste recipients)", () => {
   it("resets the form and recipient source after a successful send", async () => {
     mockFetchOnce(200, { sentCount: 1, failedCount: 0, errors: [] });
 
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     await fireEvent.input(screen.getByLabelText("Recipients"), {
       target: { value: "a@x.com" },
     });
@@ -322,13 +327,13 @@ describe("EmailAutomationWidget (bulk mode — CSV recipients)", () => {
   }
 
   it("switches to the CSV tab and shows the upload input", async () => {
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     await fireEvent.click(screen.getByRole("tab", { name: "Upload CSV" }));
     expect(screen.getByLabelText("CSV file")).toBeInTheDocument();
   });
 
   it("parses a CSV file, counts recipients, and surfaces detected columns", async () => {
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     await fireEvent.click(screen.getByRole("tab", { name: "Upload CSV" }));
 
     const file = csvFile("email,name\na@x.com,Alice\nb@x.com,Bob");
@@ -342,7 +347,7 @@ describe("EmailAutomationWidget (bulk mode — CSV recipients)", () => {
   });
 
   it("shows a clear error when the CSV has no email column", async () => {
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     await fireEvent.click(screen.getByRole("tab", { name: "Upload CSV" }));
 
     const file = csvFile("name,company\nAlice,Acme");
@@ -358,7 +363,7 @@ describe("EmailAutomationWidget (bulk mode — CSV recipients)", () => {
   it("sends the parsed CSV recipients on submit", async () => {
     mockFetchOnce(200, { sentCount: 2, failedCount: 0, errors: [] });
 
-    render(EmailAutomationWidget, { props: { mode: "bulk" } });
+    render(() => <EmailAutomationWidget mode="bulk" />);
     await fireEvent.click(screen.getByRole("tab", { name: "Upload CSV" }));
 
     const file = csvFile("email,name\na@x.com,Alice\nb@x.com,Bob");

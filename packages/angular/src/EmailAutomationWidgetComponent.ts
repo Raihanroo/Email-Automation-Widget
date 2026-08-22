@@ -210,7 +210,7 @@ function readFileAsText(file: File): Promise<string> {
           First row must be a header row. A column named "email" (or "email
           address") is used as the recipient; every other column becomes a
           personalization placeholder, e.g.
-          <code>&#123;&#123;name&#125;&#125;</code>.
+          <code>{{ '{{name}}' }}</code>.
         </p>
         @if (csvFileName) {
         <p class="eaw-hint">
