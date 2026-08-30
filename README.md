@@ -14,21 +14,48 @@ React    Vue    Angular   Svelte    Solid    Preact
 
 All business logic (API calls, validation, form state, adapters) lives in `@eaw/core`. Every framework wrapper is a thin UI binding on top of it, so behavior is identical everywhere and bugs get fixed once, not seven times.
 
-## Status
+## বর্তমান প্রজেক্ট অবস্থা
 
-This project is under active development. Current state:
+এটি শূন্য থেকে শুরু করা project নয়। একটি কাজ-করা shared SDK, standalone Web
+Component, এবং React, Preact, Vue, Svelte, Solid, ও Angular wrapper ইতিমধ্যে
+আছে। সব wrapper-এর behaviour একই রাখার লক্ষ্য নিয়ে business logic
+`@eaw/core`-এ রাখা হয়েছে।
 
-| Feature                           | Status              |
-| --------------------------------- | ------------------- |
-| Mailbox (list view)               | ✅ All 7 frameworks |
-| Compose (single email)            | ✅ All 7 frameworks |
-| Bulk Send (CSV import + paste)    | ✅ All 7 frameworks |
-| Dashboard                         | 🚧 In progress      |
-| Logs / Analytics                  | 🚧 Planned          |
-| Template Manager / Design Builder | 🚧 Planned          |
-| Settings / Reply Thread           | 🚧 Planned          |
+| Capability            | অবস্থা         | কী আছে                                                                                               |
+| --------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
+| Monorepo foundation   | ✅ সম্পন্ন     | pnpm workspace, Turborepo, TypeScript, Vite, ESLint, Prettier, Husky, Changesets ও GitHub Actions CI |
+| Core SDK              | ✅ শক্ত ভিত্তি | typed API client, retry/timeout, auth, adapter, theme, event bus, store ও validation                 |
+| Mailbox               | ✅ ৭/৭ wrapper | loading, empty, error এবং message list                                                               |
+| Composer              | ✅ ৭/৭ wrapper | To, CC, BCC, subject, body, validation, success/error recovery                                       |
+| Bulk send             | ✅ ৭/৭ wrapper | pasted list, CSV import, dedupe, invalid-entry warning, placeholders, batch CC/BCC, results          |
+| Dashboard             | ✅ ৭/৭ wrapper | analytics cards, recent mailbox, recent activity, loading/empty/error states                         |
+| Logs                  | ⏳ বাকি        | core adapter/type প্রস্তুত; UI, filtering ও pagination বাকি                                          |
+| Templates             | ⏳ বাকি        | core adapter/type প্রস্তুত; manager UI ও CRUD flow বাকি                                              |
+| Dedicated analytics   | ⏳ বাকি        | dashboard summary আছে; filterable/reporting UI বাকি                                                  |
+| Attachments           | ⏳ বাকি        | core type আছে; upload/select/send UI বাকি                                                            |
+| Publishing & examples | 🟡 আংশিক       | package publish metadata আছে; npm release, examples এবং integration guides বাকি                      |
 
-See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
+বর্তমান full workspace verification-এ **211টি automated test pass** করেছে। CI
+workflow-এ install, lint, build এবং test—চারটিই চালু আছে।
+
+### সমর্থিত widget mode
+
+`dashboard`, `composer`, `bulk`, `mailbox`, `logs`, `templates`, এবং
+`analytics` mode type-level API-তে সংজ্ঞায়িত। প্রথম চারটি ব্যবহারযোগ্য UI হিসেবে
+সাতটি wrapper-এ আছে; শেষ তিনটির UI পরের delivery phase-এর কাজ।
+
+### পরবর্তী অগ্রাধিকার
+
+1. **Logs UI** — status filter, search, pagination, এবং delivery details।
+2. **Template Manager** — list/create/edit/delete/select flow ও placeholder UX।
+3. **Analytics screen** — date range, metrics breakdown, এবং chart/reporting।
+4. **Attachments ও message detail/reply thread** — API contract নিশ্চিত করে UI flow।
+5. **Release readiness** — public usage guides, framework examples, E2E coverage,
+   npm publish automation।
+
+সম্পন্ন কাজ, scope, এবং প্রতিটি পরের ধাপের definition of done দেখতে
+[`MILESTONES.md`](./MILESTONES.md) দেখুন। দীর্ঘমেয়াদি product direction আছে
+[`ROADMAP.md`](./ROADMAP.md)-এ।
 
 ## Packages
 
