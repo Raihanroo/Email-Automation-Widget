@@ -83,6 +83,7 @@ export const createDefaultAdapter = (client: ApiClient): EmailAdapter => ({
     client.get<PaginatedResult<EmailLogEntry>>("/emails/logs", {
       page: params?.page,
       pageSize: params?.pageSize,
+      query: params?.query,
       status: params?.status,
     }),
 
