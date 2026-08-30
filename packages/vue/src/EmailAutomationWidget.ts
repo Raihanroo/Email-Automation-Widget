@@ -32,6 +32,11 @@ import {
   BulkComposeValidationErrors,
   BulkSendResult,
   CsvRecipientParseResult,
+  DashboardData,
+  loadDashboardData,
+  dashboardStats,
+  statusLabel,
+  statusTone,
 } from "@eaw/core";
 
 type BulkRecipientSource = "paste" | "csv";
@@ -90,6 +95,10 @@ export const EmailAutomationWidget = defineComponent({
     const emails = ref<MailboxItem[]>([]);
     const loading = ref(false);
     const error = ref<string | null>(null);
+
+    const dashboardData = ref<DashboardData | null>(null);
+    const dashboardLoading = ref(false);
+    const dashboardError = ref<string | null>(null);
 
     // ------------------------------------------------------------------
     // Single compose (mode="composer")
@@ -321,6 +330,35 @@ export const EmailAutomationWidget = defineComponent({
       () => [props.mode, props.baseUrl, props.token],
       () => {
         if (props.mode === "mailbox") loadMailbox();
+      },
+      { immediate: true }
+    );
+
+    async function loadDashboard() {
+      cancelled = false;
+      dashboardLoading.value = true;
+      dashboardError.value = null;
+      try {
+        const data = await loadDashboardData(adapter.value);
+        if (!cancelled) dashboardData.value = data;
+      } catch (err) {
+        if (cancelled) return;
+        const message =
+          err instanceof Error ? err.message : "Failed to load dashboard";
+        dashboardError.value = message;
+        const e = err instanceof Error ? err : new Error(message);
+        // Same reasoning as loadMailbox: `onError` prop already receives
+        // the `error` emit automatically, so don't call it twice.
+        emit("error", e);
+      } finally {
+        if (!cancelled) dashboardLoading.value = false;
+      }
+    }
+
+    watch(
+      () => [props.mode, props.baseUrl, props.token],
+      () => {
+        if (props.mode === "dashboard") loadDashboard();
       },
       { immediate: true }
     );
@@ -808,11 +846,192 @@ export const EmailAutomationWidget = defineComponent({
           props.mode === "composer" && renderComposer(),
 
           props.mode === "dashboard" &&
-            h(
-              "p",
-              { style: { color: "var(--eaw-color-text-secondary)" } },
-              "Dashboard content coming in a later milestone."
-            ),
+            (dashboardLoading.value
+              ? h("p", null, "Loading dashboard…")
+              : dashboardError.value
+              ? h(
+                  "p",
+                  { style: { color: "var(--eaw-color-danger)" } },
+                  dashboardError.value
+                )
+              : dashboardData.value &&
+                h("div", null, [
+                  h(
+                    "div",
+                    {
+                      style: {
+                        display: "grid",
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(110px, 1fr))",
+                        gap: "10px",
+                        marginBottom: "20px",
+                      },
+                    },
+                    dashboardStats(dashboardData.value.analytics).map((stat) =>
+                      h(
+                        "div",
+                        {
+                          key: stat.label,
+                          style: {
+                            padding: "12px",
+                            borderRadius: "var(--eaw-radius)",
+                            border: "1px solid var(--eaw-color-border)",
+                            background: "var(--eaw-color-bg)",
+                          },
+                        },
+                        [
+                          h(
+                            "div",
+                            {
+                              style: {
+                                fontSize: "12px",
+                                color: "var(--eaw-color-text-secondary)",
+                                marginBottom: "4px",
+                              },
+                            },
+                            stat.label
+                          ),
+                          h(
+                            "div",
+                            {
+                              style: {
+                                fontSize: "20px",
+                                fontWeight: 700,
+                                color:
+                                  stat.tone === "danger"
+                                    ? "var(--eaw-color-danger)"
+                                    : stat.tone === "success"
+                                    ? "var(--eaw-color-success, #16a34a)"
+                                    : "var(--eaw-color-text-primary)",
+                              },
+                            },
+                            stat.value
+                          ),
+                        ]
+                      )
+                    )
+                  ),
+
+                  h(
+                    "h3",
+                    { style: { fontSize: "14px", margin: "0 0 8px" } },
+                    "Recent mailbox"
+                  ),
+                  h(
+                    "ul",
+                    {
+                      style: {
+                        listStyle: "none",
+                        margin: "0 0 20px",
+                        padding: 0,
+                      },
+                    },
+                    dashboardData.value.recentMailbox.length === 0
+                      ? [
+                          h(
+                            "li",
+                            { style: { fontSize: "13px" } },
+                            "No messages yet."
+                          ),
+                        ]
+                      : dashboardData.value.recentMailbox.map((mail) =>
+                          h(
+                            "li",
+                            {
+                              key: mail.id,
+                              style: {
+                                padding: "6px 0",
+                                borderBottom:
+                                  "1px solid var(--eaw-color-border)",
+                                fontSize: "13px",
+                              },
+                            },
+                            [
+                              h("strong", null, mail.subject),
+                              " ",
+                              h(
+                                "span",
+                                {
+                                  style: {
+                                    color: "var(--eaw-color-text-secondary)",
+                                  },
+                                },
+                                `— ${mail.from}`
+                              ),
+                            ]
+                          )
+                        )
+                  ),
+
+                  h(
+                    "h3",
+                    { style: { fontSize: "14px", margin: "0 0 8px" } },
+                    "Recent activity"
+                  ),
+                  h(
+                    "ul",
+                    { style: { listStyle: "none", margin: 0, padding: 0 } },
+                    dashboardData.value.recentLogs.length === 0
+                      ? [
+                          h(
+                            "li",
+                            { style: { fontSize: "13px" } },
+                            "No recent activity."
+                          ),
+                        ]
+                      : dashboardData.value.recentLogs.map((log) =>
+                          h(
+                            "li",
+                            {
+                              key: log.id,
+                              style: {
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "6px 0",
+                                borderBottom:
+                                  "1px solid var(--eaw-color-border)",
+                                fontSize: "13px",
+                              },
+                            },
+                            [
+                              h("span", null, [
+                                h("strong", null, log.subject),
+                                " ",
+                                h(
+                                  "span",
+                                  {
+                                    style: {
+                                      color: "var(--eaw-color-text-secondary)",
+                                    },
+                                  },
+                                  `— ${log.to}`
+                                ),
+                              ]),
+                              h(
+                                "span",
+                                {
+                                  style: {
+                                    fontSize: "11px",
+                                    fontWeight: 600,
+                                    padding: "2px 8px",
+                                    borderRadius: "999px",
+                                    color:
+                                      statusTone(log.status) === "danger"
+                                        ? "var(--eaw-color-danger)"
+                                        : statusTone(log.status) === "success"
+                                        ? "var(--eaw-color-success, #16a34a)"
+                                        : "var(--eaw-color-text-secondary)",
+                                    border: "1px solid currentColor",
+                                  },
+                                },
+                                statusLabel(log.status)
+                              ),
+                            ]
+                          )
+                        )
+                  ),
+                ])),
 
           props.mode === "bulk" && renderBulkComposer(),
         ]

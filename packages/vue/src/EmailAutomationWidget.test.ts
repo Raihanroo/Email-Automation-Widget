@@ -23,6 +23,69 @@ function makeCsvFile(content: string, name = "recipients.csv") {
   return new File([content], name, { type: "text/csv" });
 }
 
+// Dashboard mode now loads real data from three endpoints (analytics,
+// logs, mailbox) via loadDashboardData() — the old placeholder test
+// assumed no network call happened at all. This mocks all three so
+// dashboard tests (and any other test that renders with the default
+// mode, which is "dashboard") don't hit an unmocked fetch.
+function mockDashboardFetch(overrides?: {
+  analytics?: Partial<{
+    totalSent: number;
+    totalOpened: number;
+    totalFailed: number;
+    openRate: number;
+    bounceRate: number;
+  }>;
+  logs?: Array<{ id: string; subject: string; to: string; status: string }>;
+  mailbox?: unknown[];
+}) {
+  const analytics = {
+    totalSent: 120,
+    totalOpened: 80,
+    totalFailed: 3,
+    openRate: 0.667,
+    bounceRate: 0.025,
+    ...overrides?.analytics,
+  };
+  const logs = overrides?.logs ?? [
+    {
+      id: "log-1",
+      subject: "Welcome email",
+      to: "jane@example.com",
+      status: "sent",
+    },
+  ];
+  const mailbox = overrides?.mailbox ?? [];
+
+  global.fetch = vi.fn((url: string) => {
+    if (url.includes("/analytics")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => analytics,
+        text: async () => JSON.stringify(analytics),
+      });
+    }
+    if (url.includes("/logs")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: logs }),
+        text: async () => JSON.stringify({ items: logs }),
+      });
+    }
+    if (url.includes("/mailbox")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: mailbox }),
+        text: async () => JSON.stringify({ items: mailbox }),
+      });
+    }
+    return Promise.reject(new Error(`Unexpected fetch url: ${url}`));
+  }) as unknown as typeof fetch;
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
 });
@@ -32,27 +95,76 @@ afterEach(() => {
 });
 
 describe("EmailAutomationWidget (dashboard mode)", () => {
-  it("renders the placeholder and never calls the network", () => {
-    const fetchSpy = vi.fn();
-    global.fetch = fetchSpy as unknown as typeof fetch;
+  it("shows a loading state, then loads dashboard stats and recent activity from the network", async () => {
+    mockDashboardFetch();
 
     render(EmailAutomationWidget, { props: { mode: "dashboard" } });
 
     expect(screen.getByText("Email Automation Widget")).toBeInTheDocument();
-    expect(
-      screen.getByText("Dashboard content coming in a later milestone.")
-    ).toBeInTheDocument();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(screen.getByText("Loading dashboard…")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Total Sent")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("120")).toBeInTheDocument(); // Total Sent
+    expect(screen.getByText("80")).toBeInTheDocument(); // Opened
+    expect(screen.getByText("67%")).toBeInTheDocument(); // Open Rate (0.667 rounded)
+    expect(screen.getAllByText("3%").length).toBeGreaterThan(0); // Bounce Rate (0.025 rounded)
+
+    expect(screen.getByText("Welcome email")).toBeInTheDocument();
+    expect(screen.getByText(/jane@example\.com/)).toBeInTheDocument();
+    expect(screen.getByText("Sent")).toBeInTheDocument();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/analytics"),
+      expect.anything()
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/logs?pageSize=5"),
+      expect.anything()
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/mailbox?pageSize=5"),
+      expect.anything()
+    );
   });
 
-  it("defaults to dashboard mode when no mode prop is given", () => {
+  it("defaults to dashboard mode when no mode prop is given", async () => {
+    mockDashboardFetch();
     render(EmailAutomationWidget);
+    expect(screen.getByText("Email Automation Widget")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Total Sent")).toBeInTheDocument();
+    });
+  });
+
+  it("shows 'No recent activity.' when there are no logs yet", async () => {
+    mockDashboardFetch({ logs: [] });
+    render(EmailAutomationWidget, { props: { mode: "dashboard" } });
+    await waitFor(() => {
+      expect(screen.getByText("No recent activity.")).toBeInTheDocument();
+    });
+  });
+
+  it("shows a dashboard error message when the request fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "Server exploded" }),
+      text: async () => "Server exploded",
+    }) as unknown as typeof fetch;
+
+    render(EmailAutomationWidget, { props: { mode: "dashboard" } });
     expect(
-      screen.getByText("Dashboard content coming in a later milestone.")
+      await screen.findByText(/API request failed with status 500/)
     ).toBeInTheDocument();
   });
 
   it("applies the resolved theme as CSS custom properties on the root element", () => {
+    // Default mode is "dashboard", which now fetches — mock it so this
+    // synchronous, theme-only assertion doesn't hit a real/unmocked fetch.
+    mockDashboardFetch();
     const { container } = render(EmailAutomationWidget, {
       props: { theme: { primary: "#abcdef" } },
     });
@@ -61,6 +173,7 @@ describe("EmailAutomationWidget (dashboard mode)", () => {
   });
 
   it("reflects the layout prop as a data attribute", () => {
+    mockDashboardFetch();
     const { container } = render(EmailAutomationWidget, {
       props: { layout: "embedded" },
     });
@@ -225,14 +338,28 @@ describe("EmailAutomationWidget (mailbox mode)", () => {
   });
 
   it("re-fetches the mailbox when the mode prop changes to mailbox after mount", async () => {
-    mockFetchOnce(200, { items: [], total: 0 });
+    mockDashboardFetch({ mailbox: [] });
     const { rerender } = render(EmailAutomationWidget, {
       props: { mode: "dashboard" },
     });
-    expect(global.fetch).not.toHaveBeenCalled();
+
+    // Dashboard mode fetches on mount (analytics + logs + mailbox) —
+    // that's now expected, not a leak.
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    const callsBeforeSwitch = (global.fetch as ReturnType<typeof vi.fn>).mock
+      .calls.length;
 
     await rerender({ mode: "mailbox" });
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(
+        (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+      ).toBeGreaterThan(callsBeforeSwitch)
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/mailbox"),
+      expect.anything()
+    );
   });
 });
 

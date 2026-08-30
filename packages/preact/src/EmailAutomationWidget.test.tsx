@@ -1,3 +1,4 @@
+import "@testing-library/jest-dom/vitest";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/preact";
 import { EmailAutomationWidget } from "./EmailAutomationWidget";
@@ -37,6 +38,19 @@ function mockFetchPending() {
     .mockReturnValue(new Promise(() => {})) as unknown as typeof fetch;
 }
 
+function mockFetchByUrl(routes: Record<string, unknown>) {
+  global.fetch = vi.fn().mockImplementation((url: string) => {
+    const key = Object.keys(routes).find((k) => url.includes(k));
+    const body = key ? routes[key] : {};
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    });
+  }) as unknown as typeof fetch;
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
 });
@@ -46,20 +60,103 @@ afterEach(() => {
 });
 
 describe("EmailAutomationWidget (dashboard mode)", () => {
-  it("renders the placeholder and never calls the network", () => {
-    const fetchSpy = vi.fn();
-    global.fetch = fetchSpy as unknown as typeof fetch;
+  it("shows a loading state while the dashboard requests are in flight", async () => {
+    mockFetchPending();
+    render(<EmailAutomationWidget mode="dashboard" />);
+    expect(await screen.findByText("Loading dashboard…")).toBeInTheDocument();
+  });
+
+  it("defaults to dashboard mode when no mode prop is given", async () => {
+    mockFetchByUrl({
+      analytics: {
+        totalSent: 0,
+        totalOpened: 0,
+        totalFailed: 0,
+        openRate: 0,
+        bounceRate: 0,
+      },
+      logs: { items: [], total: 0 },
+      mailbox: { items: [], total: 0 },
+    });
+    render(<EmailAutomationWidget />);
+    expect(await screen.findByText("Total Sent")).toBeInTheDocument();
+  });
+
+  it("renders stat cards, recent mailbox, and recent activity once all three requests resolve", async () => {
+    mockFetchByUrl({
+      analytics: {
+        totalSent: 120,
+        totalOpened: 80,
+        totalFailed: 3,
+        openRate: 0.667,
+        bounceRate: 0.025,
+      },
+      logs: {
+        items: [
+          {
+            id: "l1",
+            to: "user@example.com",
+            subject: "Weekly digest",
+            status: "opened",
+            sentAt: new Date().toISOString(),
+          },
+        ],
+        total: 1,
+      },
+      mailbox: {
+        items: [{ id: "m1", subject: "Welcome", from: "team@example.com" }],
+        total: 1,
+      },
+    });
+
+    render(<EmailAutomationWidget mode="dashboard" baseURL="/api" />);
+
+    expect(await screen.findByText("Total Sent")).toBeInTheDocument();
+    expect(screen.getByText("120")).toBeInTheDocument();
+    expect(screen.getByText("67%")).toBeInTheDocument();
+    expect(screen.getByText("Welcome")).toBeInTheDocument();
+    expect(screen.getByText("Weekly digest")).toBeInTheDocument();
+    expect(screen.getAllByText("Opened").length).toBeGreaterThan(0);
+  });
+
+  it('shows "No messages yet." and "No recent activity." when both lists are empty', async () => {
+    mockFetchByUrl({
+      analytics: {
+        totalSent: 0,
+        totalOpened: 0,
+        totalFailed: 0,
+        openRate: 0,
+        bounceRate: 0,
+      },
+      logs: { items: [], total: 0 },
+      mailbox: { items: [], total: 0 },
+    });
 
     render(<EmailAutomationWidget mode="dashboard" />);
 
-    expect(screen.getByText("Email Automation Widget")).toBeInTheDocument();
+    expect(await screen.findByText("No messages yet.")).toBeInTheDocument();
+    expect(screen.getByText("No recent activity.")).toBeInTheDocument();
+  });
+
+  it("shows an error message and calls onError when a dashboard request fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "Server exploded" }),
+      text: async () => "Server exploded",
+    }) as unknown as typeof fetch;
+
+    const onError = vi.fn();
+    render(<EmailAutomationWidget mode="dashboard" onError={onError} />);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(
-      screen.getByText("Dashboard content coming in a later milestone.")
+      await screen.findByText(/API request failed with status 500/)
     ).toBeInTheDocument();
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("applies the resolved theme as CSS custom properties on the root element", () => {
+    mockFetchPending();
     const { container } = render(
       <EmailAutomationWidget theme={{ primary: "#00ff00" }} />
     );
@@ -68,6 +165,7 @@ describe("EmailAutomationWidget (dashboard mode)", () => {
   });
 
   it("reflects the layout prop as a data attribute", () => {
+    mockFetchPending();
     const { container } = render(<EmailAutomationWidget layout="embedded" />);
     expect(container.querySelector(".eaw-root")).toHaveAttribute(
       "data-layout",

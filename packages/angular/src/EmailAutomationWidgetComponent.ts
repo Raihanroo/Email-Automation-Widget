@@ -23,6 +23,7 @@ import {
   ComposeFormState,
   ComposeValidationErrors,
   EmailLogEntry,
+  EmailStatus,
   emptyBulkComposeForm,
   parseRecipients,
   parseRecipientsFromCsv,
@@ -34,6 +35,11 @@ import {
   BulkSendResult,
   BulkRecipient,
   CsvRecipientParseResult,
+  DashboardData,
+  loadDashboardData,
+  dashboardStats,
+  statusLabel,
+  statusTone,
 } from "@eaw/core";
 
 type BulkRecipientSource = "paste" | "csv";
@@ -91,9 +97,62 @@ function readFileAsText(file: File): Promise<string> {
         <li>No messages yet.</li>
         }
       </ul>
-      } } @if (mode === "dashboard") {
-      <p class="eaw-muted">Dashboard content coming in a later milestone.</p>
-      } @if (mode === "composer") {
+      } } @if (mode === "dashboard") { @if (dashboardLoading) {
+      <p>Loading dashboard…</p>
+      } @if (dashboardError) {
+      <p class="eaw-error">{{ dashboardError }}</p>
+      } @if (!dashboardLoading && !dashboardError && dashboardData) {
+      <div>
+        <div class="eaw-dashboard-stats">
+          @for (stat of dashboardStats(dashboardData.analytics); track
+          stat.label) {
+          <div class="eaw-stat-card">
+            <div class="eaw-stat-label">{{ stat.label }}</div>
+            <div
+              class="eaw-stat-value"
+              [class.eaw-stat-danger]="stat.tone === 'danger'"
+              [class.eaw-stat-success]="stat.tone === 'success'"
+            >
+              {{ stat.value }}
+            </div>
+          </div>
+          }
+        </div>
+
+        <h3 class="eaw-subheading">Recent mailbox</h3>
+        <ul class="eaw-plain-list">
+          @for (mail of dashboardData.recentMailbox; track mail.id) {
+          <li>
+            <strong>{{ mail.subject }}</strong>
+            <span class="eaw-muted">— {{ mail.from }}</span>
+          </li>
+          } @empty {
+          <li>No messages yet.</li>
+          }
+        </ul>
+
+        <h3 class="eaw-subheading">Recent activity</h3>
+        <ul class="eaw-plain-list">
+          @for (log of dashboardData.recentLogs; track log.id) {
+          <li class="eaw-activity-row">
+            <span>
+              <strong>{{ log.subject }}</strong>
+              <span class="eaw-muted">— {{ log.to }}</span>
+            </span>
+            <span
+              class="eaw-status-badge"
+              [class.eaw-stat-danger]="statusTone(log.status) === 'danger'"
+              [class.eaw-stat-success]="statusTone(log.status) === 'success'"
+            >
+              {{ statusLabel(log.status) }}
+            </span>
+          </li>
+          } @empty {
+          <li>No recent activity.</li>
+          }
+        </ul>
+      </div>
+      } } @if (mode === "composer") {
       <form (submit)="handleComposeSubmit($event)" novalidate>
         <label class="eaw-label" for="eaw-compose-to">To</label>
         <input
@@ -459,6 +518,67 @@ function readFileAsText(file: File): Promise<string> {
         padding: 2px 0;
         font-size: 13px;
       }
+      .eaw-dashboard-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .eaw-stat-card {
+        padding: 12px;
+        border-radius: var(--eaw-radius);
+        border: 1px solid var(--eaw-color-border);
+        background: var(--eaw-color-bg);
+      }
+      .eaw-stat-label {
+        font-size: 12px;
+        color: var(--eaw-color-text-secondary);
+        margin-bottom: 4px;
+      }
+      .eaw-stat-value {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--eaw-color-text-primary);
+      }
+      .eaw-stat-value.eaw-stat-danger {
+        color: var(--eaw-color-danger);
+      }
+      .eaw-stat-value.eaw-stat-success {
+        color: var(--eaw-color-success, #16a34a);
+      }
+      .eaw-subheading {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      .eaw-plain-list {
+        list-style: none;
+        margin: 0 0 20px;
+        padding: 0;
+      }
+      .eaw-plain-list li {
+        padding: 6px 0;
+        border-bottom: 1px solid var(--eaw-color-border);
+        font-size: 13px;
+      }
+      .eaw-activity-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .eaw-status-badge {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+        color: var(--eaw-color-text-secondary);
+      }
+      .eaw-status-badge.eaw-stat-danger {
+        color: var(--eaw-color-danger);
+      }
+      .eaw-status-badge.eaw-stat-success {
+        color: var(--eaw-color-success, #16a34a);
+      }
     `,
   ],
 })
@@ -477,6 +597,11 @@ export class EmailAutomationWidgetComponent implements OnInit, OnChanges {
   loading = false;
   emails: MailboxItem[] = [];
   errorMessage: string | null = null;
+
+  // --- Dashboard state ---------------------------------------------------
+  dashboardLoading = false;
+  dashboardData: DashboardData | null = null;
+  dashboardError: string | null = null;
 
   // --- Composer state --------------------------------------------------
   composeForm: ComposeFormState = emptyComposeForm();
@@ -525,6 +650,9 @@ export class EmailAutomationWidgetComponent implements OnInit, OnChanges {
     if (this.mode === "mailbox") {
       this.loadMailbox();
     }
+    if (this.mode === "dashboard") {
+      this.loadDashboard();
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -533,6 +661,9 @@ export class EmailAutomationWidgetComponent implements OnInit, OnChanges {
     }
     if (this.mode === "mailbox") {
       this.loadMailbox();
+    }
+    if (this.mode === "dashboard") {
+      this.loadDashboard();
     }
   }
 
@@ -562,6 +693,37 @@ export class EmailAutomationWidgetComponent implements OnInit, OnChanges {
       .finally(() => {
         this.loading = false;
       });
+  }
+
+  private loadDashboard(): void {
+    if (!this._adapter) {
+      this.initAdapter();
+    }
+    this.dashboardLoading = true;
+    this.dashboardError = null;
+    loadDashboardData(this._adapter)
+      .then((data) => {
+        this.dashboardData = data;
+      })
+      .catch((err: Error) => {
+        this.dashboardError = err.message;
+        this.error.emit(err);
+      })
+      .finally(() => {
+        this.dashboardLoading = false;
+      });
+  }
+
+  dashboardStats(analytics: DashboardData["analytics"]) {
+    return dashboardStats(analytics);
+  }
+
+  statusLabel(status: EmailStatus): string {
+    return statusLabel(status);
+  }
+
+  statusTone(status: EmailStatus) {
+    return statusTone(status);
   }
 
   // --- Composer handlers -------------------------------------------------

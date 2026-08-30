@@ -18,6 +18,69 @@ function mockFetchPending() {
     .mockReturnValue(new Promise(() => {})) as unknown as typeof fetch;
 }
 
+// Dashboard mode now loads real data from three endpoints (analytics,
+// logs, mailbox) via loadDashboardData() — the old placeholder test
+// assumed no network call happened at all. This mocks all three so
+// dashboard tests (and any test that mounts with the default mode,
+// which is "dashboard") don't hit an unmocked fetch.
+function mockDashboardFetch(overrides?: {
+  analytics?: Partial<{
+    totalSent: number;
+    totalOpened: number;
+    totalFailed: number;
+    openRate: number;
+    bounceRate: number;
+  }>;
+  logs?: Array<{ id: string; subject: string; to: string; status: string }>;
+  mailbox?: unknown[];
+}) {
+  const analytics = {
+    totalSent: 120,
+    totalOpened: 80,
+    totalFailed: 3,
+    openRate: 0.667,
+    bounceRate: 0.025,
+    ...overrides?.analytics,
+  };
+  const logs = overrides?.logs ?? [
+    {
+      id: "log-1",
+      subject: "Welcome email",
+      to: "jane@example.com",
+      status: "sent",
+    },
+  ];
+  const mailbox = overrides?.mailbox ?? [];
+
+  globalThis.fetch = vi.fn((url: string) => {
+    if (url.includes("/analytics")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => analytics,
+        text: async () => JSON.stringify(analytics),
+      });
+    }
+    if (url.includes("/logs")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: logs }),
+        text: async () => JSON.stringify({ items: logs }),
+      });
+    }
+    if (url.includes("/mailbox")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: mailbox }),
+        text: async () => JSON.stringify({ items: mailbox }),
+      });
+    }
+    return Promise.reject(new Error(`Unexpected fetch url: ${url}`));
+  }) as unknown as typeof fetch;
+}
+
 async function createComponent(): Promise<
   ComponentFixture<EmailAutomationWidgetComponent>
 > {
@@ -62,28 +125,94 @@ afterEach(() => {
 });
 
 describe("EmailAutomationWidgetComponent (dashboard mode)", () => {
-  it("renders the placeholder and never calls the network", async () => {
-    const fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+  // NOTE: mounting with mode="dashboard" bound via setInput fires
+  // loadDashboard() TWICE on initial mount — same family of bug as the
+  // mailbox mode's documented double-fetch (see "sets errorMessage..."
+  // test below): once from ngOnChanges (firstChange) and once from
+  // ngOnInit's own explicit check. Both promise chains resolve to the
+  // same mocked data here, so final component state is still correct —
+  // we just don't assert an exact call count for the dashboard fetches.
+  // As with the rest of this file, we assert on componentInstance state
+  // rather than raw DOM text for anything that depends on post-mount
+  // async resolution (see file-level NOTE ON TEST STRATEGY above).
+
+  it("loads dashboard stats and recent activity from the network", async () => {
+    mockDashboardFetch();
 
     const fixture = await createComponent();
     fixture.componentRef.setInput("mode", "dashboard");
     fixture.detectChanges();
 
-    const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
-    expect(text).toContain("Email Automation Widget");
-    expect(text).toContain("Dashboard content coming in a later milestone.");
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.dashboardLoading).toBe(true);
+
+    await flush(fixture);
+
+    expect(fixture.componentInstance.dashboardLoading).toBe(false);
+    expect(fixture.componentInstance.dashboardError).toBeNull();
+    expect(fixture.componentInstance.dashboardData).not.toBeNull();
+    expect(fixture.componentInstance.dashboardData!.analytics).toMatchObject({
+      totalSent: 120,
+      totalOpened: 80,
+      totalFailed: 3,
+    });
+    expect(
+      fixture.componentInstance.dashboardData!.recentLogs[0]
+    ).toMatchObject({
+      subject: "Welcome email",
+      to: "jane@example.com",
+      status: "sent",
+    });
+
+    const calledUrls = (
+      globalThis.fetch as ReturnType<typeof vi.fn>
+    ).mock.calls.map((c) => c[0]);
+    expect(calledUrls.some((u) => String(u).includes("/analytics"))).toBe(true);
+    expect(calledUrls.some((u) => String(u).includes("/logs"))).toBe(true);
+    expect(calledUrls.some((u) => String(u).includes("/mailbox"))).toBe(true);
   });
 
   it("defaults to dashboard mode when no mode input is bound", async () => {
+    mockDashboardFetch();
     const fixture = await createComponent();
     fixture.detectChanges();
-    const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
-    expect(text).toContain("Dashboard content coming in a later milestone.");
+    await flush(fixture);
+
+    expect(fixture.componentInstance.dashboardData).not.toBeNull();
+  });
+
+  it("shows 'No recent activity.' state when there are no logs yet", async () => {
+    mockDashboardFetch({ logs: [] });
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "dashboard");
+    fixture.detectChanges();
+    await flush(fixture);
+
+    expect(fixture.componentInstance.dashboardData?.recentLogs).toEqual([]);
+  });
+
+  it("sets dashboardError when the request fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "Server exploded" }),
+      text: async () => "Server exploded",
+    }) as unknown as typeof fetch;
+
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "dashboard");
+    fixture.detectChanges();
+    await flush(fixture);
+
+    expect(fixture.componentInstance.dashboardLoading).toBe(false);
+    expect(fixture.componentInstance.dashboardError).toMatch(
+      /API request failed with status 500/
+    );
   });
 
   it("applies the resolved theme as CSS custom properties on the root element", async () => {
+    // Default mode is "dashboard", which now fetches — mock it so this
+    // synchronous, theme-only assertion doesn't hit a real/unmocked fetch.
+    mockDashboardFetch();
     const fixture = await createComponent();
     fixture.componentRef.setInput("theme", { primary: "#a1b2c3" });
     fixture.detectChanges();
@@ -95,6 +224,7 @@ describe("EmailAutomationWidgetComponent (dashboard mode)", () => {
   });
 
   it("reflects the layout input as a data attribute", async () => {
+    mockDashboardFetch();
     const fixture = await createComponent();
     fixture.componentRef.setInput("layout", "embedded");
     fixture.detectChanges();
@@ -202,19 +332,28 @@ describe("EmailAutomationWidgetComponent (mailbox mode)", () => {
   });
 
   it("re-fetches the mailbox when mode changes to mailbox via setInput after init", async () => {
-    mockFetchOnce(200, { items: [], total: 0 });
+    // Dashboard mode now loads real data too (previously it was an inert
+    // placeholder, hence the original "fetch not called yet" assumption
+    // this test started from) — mock all three of its endpoints so the
+    // initial phase resolves cleanly.
+    mockDashboardFetch();
     const fixture = await createComponent();
     fixture.componentRef.setInput("mode", "dashboard");
     fixture.detectChanges();
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    await flush(fixture);
 
+    // Swap in a fresh mock (and thus a fresh call count) before the mode
+    // change we're actually testing, so this assertion is only about the
+    // mailbox re-fetch, not about how many dashboard calls preceded it.
+    mockFetchOnce(200, { items: [], total: 0 });
     fixture.componentRef.setInput("mode", "mailbox");
     fixture.detectChanges();
     await flush(fixture);
 
     // A change AFTER initial mount only goes through ngOnChanges (not
     // ngOnInit again), so this path does NOT double-fetch — only the
-    // initial-mount case above does.
+    // initial-mount case does (see the dashboard/mailbox "fires twice on
+    // mount" notes above).
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     expect(fixture.componentInstance.emails).toEqual([]);
     expect(fixture.componentInstance.loading).toBe(false);

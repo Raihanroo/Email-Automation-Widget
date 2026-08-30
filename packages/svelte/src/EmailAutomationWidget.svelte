@@ -25,6 +25,11 @@
     type BulkSendResult,
     type BulkRecipient,
     type CsvRecipientParseResult,
+    type DashboardData,
+    loadDashboardData,
+    dashboardStats,
+    statusLabel,
+    statusTone,
   } from "@eaw/core";
 
   /**
@@ -76,6 +81,10 @@
   let emails = $state<MailboxItem[]>([]);
   let loading = $state(false);
   let errorMessage = $state<string | null>(null);
+
+  let dashboardData = $state<DashboardData | null>(null);
+  let dashboardLoading = $state(false);
+  let dashboardError = $state<string | null>(null);
 
   // --- Composer state ------------------------------------------------
   let composeForm = $state<ComposeFormState>(emptyComposeForm());
@@ -141,6 +150,26 @@
   $effect(() => {
     if (mode === "mailbox") {
       void loadMailbox();
+    }
+  });
+
+  async function loadDashboard() {
+    dashboardLoading = true;
+    dashboardError = null;
+    try {
+      dashboardData = await loadDashboardData(adapter);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load dashboard";
+      dashboardError = message;
+      onError?.(err instanceof Error ? err : new Error(message));
+    } finally {
+      dashboardLoading = false;
+    }
+  }
+
+  $effect(() => {
+    if (mode === "dashboard") {
+      void loadDashboard();
     }
   });
 
@@ -323,7 +352,53 @@
       </ul>
     {/if}
   {:else if mode === "dashboard"}
-    <p style="color:var(--eaw-color-text-secondary);">Dashboard content coming in a later milestone.</p>
+    {#if dashboardLoading}
+      <p>Loading dashboard…</p>
+    {:else if dashboardError}
+      <p style="color:var(--eaw-color-danger);">{dashboardError}</p>
+    {:else if dashboardData}
+      <div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:10px;margin-bottom:20px;">
+          {#each dashboardStats(dashboardData.analytics) as stat (stat.label)}
+            <div style="padding:12px;border-radius:var(--eaw-radius);border:1px solid var(--eaw-color-border);background:var(--eaw-color-bg);">
+              <div style="font-size:12px;color:var(--eaw-color-text-secondary);margin-bottom:4px;">{stat.label}</div>
+              <div style={`font-size:20px;font-weight:700;color:${stat.tone === "danger" ? "var(--eaw-color-danger)" : stat.tone === "success" ? "var(--eaw-color-success, #16a34a)" : "var(--eaw-color-text-primary)"};`}>
+                {stat.value}
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        <h3 style="font-size:14px;margin:0 0 8px;">Recent mailbox</h3>
+        <ul style="list-style:none;margin:0 0 20px;padding:0;">
+          {#each dashboardData.recentMailbox as mail (mail.id)}
+            <li style="padding:6px 0;border-bottom:1px solid var(--eaw-color-border);font-size:13px;">
+              <strong>{mail.subject}</strong>
+              <span style="color:var(--eaw-color-text-secondary);"> — {mail.from}</span>
+            </li>
+          {:else}
+            <li style="font-size:13px;">No messages yet.</li>
+          {/each}
+        </ul>
+
+        <h3 style="font-size:14px;margin:0 0 8px;">Recent activity</h3>
+        <ul style="list-style:none;margin:0;padding:0;">
+          {#each dashboardData.recentLogs as log (log.id)}
+            <li style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--eaw-color-border);font-size:13px;">
+              <span>
+                <strong>{log.subject}</strong>
+                <span style="color:var(--eaw-color-text-secondary);"> — {log.to}</span>
+              </span>
+              <span style={`font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid currentColor;color:${statusTone(log.status) === "danger" ? "var(--eaw-color-danger)" : statusTone(log.status) === "success" ? "var(--eaw-color-success, #16a34a)" : "var(--eaw-color-text-secondary)"};`}>
+                {statusLabel(log.status)}
+              </span>
+            </li>
+          {:else}
+            <li style="font-size:13px;">No recent activity.</li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
   {:else if mode === "composer"}
     <form onsubmit={handleComposeSubmit} novalidate>
       <label class="eaw-label" for="eaw-compose-to">To</label>

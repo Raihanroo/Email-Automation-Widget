@@ -88,6 +88,69 @@ function csvFile(contents: string, name = "recipients.csv"): File {
   return new File([contents], name, { type: "text/csv" });
 }
 
+// Dashboard mode now loads real data from three endpoints (analytics,
+// logs, mailbox) via loadDashboardData() — the old placeholder test
+// assumed no network call happened at all. This mocks all three so
+// dashboard tests (and any test that mounts with the default mode,
+// which is "dashboard") don't hit an unmocked fetch.
+function mockDashboardFetch(overrides?: {
+  analytics?: Partial<{
+    totalSent: number;
+    totalOpened: number;
+    totalFailed: number;
+    openRate: number;
+    bounceRate: number;
+  }>;
+  logs?: Array<{ id: string; subject: string; to: string; status: string }>;
+  mailbox?: unknown[];
+}) {
+  const analytics = {
+    totalSent: 120,
+    totalOpened: 80,
+    totalFailed: 3,
+    openRate: 0.667,
+    bounceRate: 0.025,
+    ...overrides?.analytics,
+  };
+  const logs = overrides?.logs ?? [
+    {
+      id: "log-1",
+      subject: "Welcome email",
+      to: "jane@example.com",
+      status: "sent",
+    },
+  ];
+  const mailbox = overrides?.mailbox ?? [];
+
+  global.fetch = vi.fn((url: string) => {
+    if (url.includes("/analytics")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => analytics,
+        text: async () => JSON.stringify(analytics),
+      });
+    }
+    if (url.includes("/logs")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: logs }),
+        text: async () => JSON.stringify({ items: logs }),
+      });
+    }
+    if (url.includes("/mailbox")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: mailbox }),
+        text: async () => JSON.stringify({ items: mailbox }),
+      });
+    }
+    return Promise.reject(new Error(`Unexpected fetch url: ${url}`));
+  }) as unknown as typeof fetch;
+}
+
 /**
  * Some of this component's `html` templates wrap text across multiple
  * source lines (e.g. `Sent ${count}, failed\n${count}.`), which Lit
@@ -132,35 +195,57 @@ afterEach(() => {
 });
 
 describe("<email-automation-widget> (dashboard mode)", () => {
-  it("renders the placeholder and never calls the network", async () => {
-    const fetchSpy = vi.fn();
-    global.fetch = fetchSpy as unknown as typeof fetch;
+  it("shows a loading state, then loads dashboard stats and recent activity from the network", async () => {
+    mockDashboardFetch();
 
     const el = mount({ mode: "dashboard" });
     await el.updateComplete;
 
     expect(text(el)).toContain("Email Automation Widget");
-    expect(text(el)).toContain(
-      "Dashboard content coming in a later milestone."
-    );
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(text(el)).toContain("Loading dashboard…");
+
+    await flush(el);
+    await flush(el);
+
+    expect(text(el)).toContain("Total Sent");
+    expect(text(el)).toContain("120"); // Total Sent
+    expect(text(el)).toContain("80"); // Opened
+    expect(text(el)).toContain("67%"); // Open Rate (0.667 rounded)
+    expect(text(el)).toContain("3%"); // Bounce Rate (0.025 rounded)
+    expect(text(el)).toContain("Welcome email");
+    expect(text(el)).toContain("jane@example.com");
+    expect(text(el)).toContain("Sent");
   });
 
   it("defaults to dashboard mode when no mode attribute is given", async () => {
+    mockDashboardFetch();
     const el = mount();
     await el.updateComplete;
-    expect(text(el)).toContain(
-      "Dashboard content coming in a later milestone."
-    );
+    await flush(el);
+    await flush(el);
+    expect(text(el)).toContain("Total Sent");
+  });
+
+  it("shows 'No recent activity.' when there are no logs yet", async () => {
+    mockDashboardFetch({ logs: [] });
+    const el = mount({ mode: "dashboard" });
+    await el.updateComplete;
+    await flush(el);
+    await flush(el);
+    expect(text(el)).toContain("No recent activity.");
   });
 
   it("applies the resolved theme as CSS custom properties on the host element", async () => {
+    // Default mode is "dashboard", which now fetches — mock it so this
+    // theme-only assertion doesn't hit a real/unmocked fetch.
+    mockDashboardFetch();
     const el = mount({ theme: JSON.stringify({ primary: "#654321" }) });
     await el.updateComplete;
     expect(el.style.getPropertyValue("--eaw-color-primary")).toBe("#654321");
   });
 
   it("falls back to no theme override when the theme attribute is invalid JSON", async () => {
+    mockDashboardFetch();
     const el = mount({ theme: "{not valid json" });
     await el.updateComplete;
     // Falls back to the default theme rather than throwing.

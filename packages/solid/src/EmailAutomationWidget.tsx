@@ -20,6 +20,11 @@ import {
   BulkComposeFormState,
   BulkSendResult,
   CsvRecipientParseResult,
+  DashboardData,
+  loadDashboardData,
+  dashboardStats,
+  statusLabel,
+  statusTone,
 } from "@eaw/core";
 
 type BulkRecipientSource = "paste" | "csv";
@@ -50,6 +55,13 @@ export function EmailAutomationWidget(props: WidgetProps) {
   const [emails, setEmails] = createSignal<MailboxItem[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+
+  // Dashboard state
+  const [dashboardData, setDashboardData] = createSignal<DashboardData | null>(
+    null
+  );
+  const [dashboardLoading, setDashboardLoading] = createSignal(false);
+  const [dashboardError, setDashboardError] = createSignal<string | null>(null);
 
   // Compose state
   const [composeForm, setComposeForm] = createSignal<ComposeFormState>(
@@ -142,7 +154,31 @@ export function EmailAutomationWidget(props: WidgetProps) {
     });
   });
 
-  // Validation effects
+  // Load dashboard effect
+  createEffect(() => {
+    if (mode !== "dashboard") return;
+
+    let cancelled = false;
+    setDashboardLoading(true);
+    setDashboardError(null);
+
+    loadDashboardData(adapter())
+      .then((data) => {
+        if (!cancelled) setDashboardData(data);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setDashboardError(err.message);
+        onError?.(err);
+      })
+      .finally(() => {
+        if (!cancelled) setDashboardLoading(false);
+      });
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
   createEffect(() => {
     if (!composeTouched()) return;
     setComposeErrors(validateComposeForm(composeForm()));
@@ -305,7 +341,136 @@ export function EmailAutomationWidget(props: WidgetProps) {
           <h2 style={{ margin: "0 0 12px", "font-size": "18px" }}>
             Email Automation Widget
           </h2>
-          <p>Dashboard content coming in a later milestone.</p>
+          {dashboardLoading() && <p>Loading dashboard…</p>}
+          {dashboardError() && (
+            <p style={{ color: "var(--eaw-color-danger)" }}>
+              {dashboardError()}
+            </p>
+          )}
+          {!dashboardLoading() && !dashboardError() && dashboardData() && (
+            <div>
+              <div
+                style={{
+                  display: "grid",
+                  "grid-template-columns":
+                    "repeat(auto-fit, minmax(110px, 1fr))",
+                  gap: "10px",
+                  "margin-bottom": "20px",
+                }}
+              >
+                {dashboardStats(dashboardData()!.analytics).map((stat) => (
+                  <div
+                    style={{
+                      padding: "12px",
+                      "border-radius": "var(--eaw-radius)",
+                      border: "1px solid var(--eaw-color-border)",
+                      background: "var(--eaw-color-bg)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        "font-size": "12px",
+                        color: "var(--eaw-color-text-secondary)",
+                        "margin-bottom": "4px",
+                      }}
+                    >
+                      {stat.label}
+                    </div>
+                    <div
+                      style={{
+                        "font-size": "20px",
+                        "font-weight": 700,
+                        color:
+                          stat.tone === "danger"
+                            ? "var(--eaw-color-danger)"
+                            : stat.tone === "success"
+                            ? "var(--eaw-color-success, #16a34a)"
+                            : "var(--eaw-color-text-primary)",
+                      }}
+                    >
+                      {stat.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <h3 style={{ "font-size": "14px", margin: "0 0 8px" }}>
+                Recent mailbox
+              </h3>
+              <ul
+                style={{ "list-style": "none", margin: "0 0 20px", padding: 0 }}
+              >
+                {dashboardData()!.recentMailbox.length === 0 ? (
+                  <li style={{ "font-size": "13px" }}>No messages yet.</li>
+                ) : (
+                  dashboardData()!.recentMailbox.map((mail) => (
+                    <li
+                      style={{
+                        padding: "6px 0",
+                        "border-bottom": "1px solid var(--eaw-color-border)",
+                        "font-size": "13px",
+                      }}
+                    >
+                      <strong>{mail.subject}</strong>{" "}
+                      <span
+                        style={{ color: "var(--eaw-color-text-secondary)" }}
+                      >
+                        — {mail.from}
+                      </span>
+                    </li>
+                  ))
+                )}
+              </ul>
+
+              <h3 style={{ "font-size": "14px", margin: "0 0 8px" }}>
+                Recent activity
+              </h3>
+              <ul style={{ "list-style": "none", margin: 0, padding: 0 }}>
+                {dashboardData()!.recentLogs.length === 0 ? (
+                  <li style={{ "font-size": "13px" }}>No recent activity.</li>
+                ) : (
+                  dashboardData()!.recentLogs.map((log) => (
+                    <li
+                      style={{
+                        display: "flex",
+                        "justify-content": "space-between",
+                        "align-items": "center",
+                        padding: "6px 0",
+                        "border-bottom": "1px solid var(--eaw-color-border)",
+                        "font-size": "13px",
+                      }}
+                    >
+                      <span>
+                        <strong>{log.subject}</strong>{" "}
+                        <span
+                          style={{ color: "var(--eaw-color-text-secondary)" }}
+                        >
+                          — {log.to}
+                        </span>
+                      </span>
+                      <span
+                        style={{
+                          "font-size": "11px",
+                          "font-weight": 600,
+                          padding: "2px 8px",
+                          "border-radius": "999px",
+                          border: "1px solid currentColor",
+                          color:
+                            statusTone(log.status) === "danger"
+                              ? "var(--eaw-color-danger)"
+                              : statusTone(log.status) === "success"
+                              ? "var(--eaw-color-success, #16a34a)"
+                              : "var(--eaw-color-text-secondary)",
+                        }}
+                      >
+                        {statusLabel(log.status)}
+                      </span>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          )}
         </>
       )}
       {mode === "composer" && (

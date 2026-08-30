@@ -26,6 +26,11 @@ import {
   BulkSendResult,
   BulkRecipient,
   CsvRecipientParseResult,
+  DashboardData,
+  loadDashboardData,
+  dashboardStats,
+  statusLabel,
+  statusTone,
 } from "@eaw/core";
 
 type BulkRecipientSource = "paste" | "csv";
@@ -212,6 +217,9 @@ export class EmailAutomationWidgetElement extends LitElement {
   @state() private emails: MailboxItem[] = [];
   @state() private loading = false;
   @state() private errorMessage: string | null = null;
+  @state() private dashboardData: DashboardData | null = null;
+  @state() private dashboardLoading = false;
+  @state() private dashboardError: string | null = null;
 
   // --- Composer (single email) state -------------------------------
   @state() private composeForm: ComposeFormState = emptyComposeForm();
@@ -234,6 +242,7 @@ export class EmailAutomationWidgetElement extends LitElement {
   @state() private csvReadError: string | null = null;
 
   private adapter!: EmailAdapter;
+  private loadedMode: WidgetMode | null = null;
 
   private get pasteParsed() {
     return parseRecipients(this.bulkForm.recipientsRaw);
@@ -255,12 +264,7 @@ export class EmailAutomationWidgetElement extends LitElement {
     super.connectedCallback();
     this.rebuildAdapter();
     this.applyThemeVars();
-    // NOTE: don't also call `this.loadMailbox()` here when mode is
-    // "mailbox" — Lit's `updated()` lifecycle already fires on the
-    // element's first update pass (attribute-derived properties count
-    // as "changed" on that first pass too), and its `changed.has("mode")`
-    // branch below calls `loadMailbox()`. Calling it here as well fired
-    // the request twice on initial mount.
+    this.loadDataForMode();
   }
 
   updated(changed: PropertyValues): void {
@@ -270,8 +274,8 @@ export class EmailAutomationWidgetElement extends LitElement {
     if (changed.has("_themeOverride")) {
       this.applyThemeVars();
     }
-    if (changed.has("mode") && this.mode === "mailbox") {
-      this.loadMailbox();
+    if (changed.has("mode")) {
+      this.loadDataForMode();
     }
   }
 
@@ -464,6 +468,34 @@ export class EmailAutomationWidgetElement extends LitElement {
     }
   }
 
+  private loadDataForMode() {
+    if (this.loadedMode === this.mode) return;
+    this.loadedMode = this.mode;
+    if (this.mode === "mailbox") this.loadMailbox();
+    if (this.mode === "dashboard") this.loadDashboard();
+  }
+
+  private async loadDashboard() {
+    this.dashboardLoading = true;
+    this.dashboardError = null;
+    try {
+      this.dashboardData = await loadDashboardData(this.adapter);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to load dashboard";
+      this.dashboardError = message;
+      this.dispatchEvent(
+        new CustomEvent("eaw-error", {
+          detail: { message },
+          bubbles: true,
+          composed: true,
+        })
+      );
+    } finally {
+      this.dashboardLoading = false;
+    }
+  }
+
   render() {
     return html`
       <div class="eaw-root">
@@ -471,11 +503,7 @@ export class EmailAutomationWidgetElement extends LitElement {
         ${this.mode === "mailbox" ? this.renderMailbox() : nothing}
         ${this.mode === "composer" ? this.renderComposer() : nothing}
         ${this.mode === "bulk" ? this.renderBulkComposer() : nothing}
-        ${this.mode === "dashboard"
-          ? html`<p class="muted">
-              Dashboard content coming in a later milestone.
-            </p>`
-          : nothing}
+        ${this.mode === "dashboard" ? this.renderDashboard() : nothing}
       </div>
     `;
   }
@@ -766,6 +794,63 @@ export class EmailAutomationWidgetElement extends LitElement {
             </li>`
         )}
       </ul>
+    `;
+  }
+
+  private renderDashboard() {
+    if (this.dashboardLoading) return html`<p>Loading dashboard…</p>`;
+    if (this.dashboardError)
+      return html`<p class="danger">${this.dashboardError}</p>`;
+    if (!this.dashboardData) return nothing;
+
+    return html`
+      <div class="eaw-dashboard-stats">
+        ${dashboardStats(this.dashboardData.analytics).map(
+          (stat) => html`
+            <div
+              class=${stat.tone === "danger"
+                ? "danger"
+                : stat.tone === "success"
+                ? "success"
+                : ""}
+            >
+              <div class="muted">${stat.label}</div>
+              <strong>${stat.value}</strong>
+            </div>
+          `
+        )}
+      </div>
+      <h3>Recent mailbox</h3>
+      ${this.dashboardData.recentMailbox.length === 0
+        ? html`<p class="muted">No messages yet.</p>`
+        : html`<ul>
+            ${this.dashboardData.recentMailbox.map(
+              (mail) => html`<li>
+                <strong>${mail.subject}</strong>
+                <span class="muted">— ${mail.from}</span>
+              </li>`
+            )}
+          </ul>`}
+      <h3>Recent activity</h3>
+      ${this.dashboardData.recentLogs.length === 0
+        ? html`<p class="muted">No recent activity.</p>`
+        : html`<ul>
+            ${this.dashboardData.recentLogs.map(
+              (log) => html`<li>
+                <strong>${log.subject}</strong>
+                <span class="muted">— ${log.to}</span>
+                <span
+                  class=${statusTone(log.status) === "danger"
+                    ? "danger"
+                    : statusTone(log.status) === "success"
+                    ? "success"
+                    : "muted"}
+                >
+                  ${statusLabel(log.status)}
+                </span>
+              </li>`
+            )}
+          </ul>`}
     `;
   }
 }

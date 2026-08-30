@@ -21,6 +21,11 @@ import {
   BulkComposeFormState,
   BulkSendResult,
   CsvRecipientParseResult,
+  DashboardData,
+  loadDashboardData,
+  dashboardStats,
+  statusLabel,
+  statusTone,
 } from "@eaw/core";
 
 type BulkRecipientSource = "paste" | "csv";
@@ -72,6 +77,12 @@ export function EmailAutomationWidget({
   const [emails, setEmails] = useState<MailboxItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(
+    null
+  );
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   const [composeForm, setComposeForm] = useState<ComposeFormState>(
     emptyComposeForm()
@@ -170,6 +181,31 @@ export function EmailAutomationWidget({
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, adapter, onError]);
+
+  useEffect(() => {
+    if (mode !== "dashboard") return;
+
+    let cancelled = false;
+    setDashboardLoading(true);
+    setDashboardError(null);
+
+    loadDashboardData(adapter)
+      .then((data) => {
+        if (!cancelled) setDashboardData(data);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setDashboardError(err.message);
+        onError?.(err);
+      })
+      .finally(() => {
+        if (!cancelled) setDashboardLoading(false);
       });
 
     return () => {
@@ -468,9 +504,132 @@ export function EmailAutomationWidget({
       )}
 
       {mode === "dashboard" && (
-        <p style={{ color: "var(--eaw-color-text-secondary)" }}>
-          Dashboard content coming in a later milestone.
-        </p>
+        <div>
+          {dashboardLoading && <p>Loading dashboard…</p>}
+          {dashboardError && (
+            <p style={{ color: "var(--eaw-color-danger)" }}>{dashboardError}</p>
+          )}
+          {!dashboardLoading && !dashboardError && dashboardData && (
+            <>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
+                  gap: "10px",
+                  marginBottom: "20px",
+                }}
+              >
+                {dashboardStats(dashboardData.analytics).map((stat) => (
+                  <div
+                    key={stat.label}
+                    style={{
+                      padding: "12px",
+                      borderRadius: "var(--eaw-radius)",
+                      border: "1px solid var(--eaw-color-border)",
+                      background: "var(--eaw-color-bg)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        color: "var(--eaw-color-text-secondary)",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      {stat.label}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "20px",
+                        fontWeight: 700,
+                        color:
+                          stat.tone === "danger"
+                            ? "var(--eaw-color-danger)"
+                            : stat.tone === "success"
+                            ? "var(--eaw-color-success, #16a34a)"
+                            : "var(--eaw-color-text-primary)",
+                      }}
+                    >
+                      {stat.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <h3 style={{ fontSize: "14px", margin: "0 0 8px" }}>
+                Recent mailbox
+              </h3>
+              <ul style={{ listStyle: "none", margin: "0 0 20px", padding: 0 }}>
+                {dashboardData.recentMailbox.map((mail) => (
+                  <li
+                    key={mail.id}
+                    style={{
+                      padding: "6px 0",
+                      borderBottom: "1px solid var(--eaw-color-border)",
+                      fontSize: "13px",
+                    }}
+                  >
+                    <strong>{mail.subject}</strong>{" "}
+                    <span style={{ color: "var(--eaw-color-text-secondary)" }}>
+                      — {mail.from}
+                    </span>
+                  </li>
+                ))}
+                {dashboardData.recentMailbox.length === 0 && (
+                  <li style={{ fontSize: "13px" }}>No messages yet.</li>
+                )}
+              </ul>
+
+              <h3 style={{ fontSize: "14px", margin: "0 0 8px" }}>
+                Recent activity
+              </h3>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {dashboardData.recentLogs.map((log) => (
+                  <li
+                    key={log.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "6px 0",
+                      borderBottom: "1px solid var(--eaw-color-border)",
+                      fontSize: "13px",
+                    }}
+                  >
+                    <span>
+                      <strong>{log.subject}</strong>{" "}
+                      <span
+                        style={{ color: "var(--eaw-color-text-secondary)" }}
+                      >
+                        — {log.to}
+                      </span>
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        padding: "2px 8px",
+                        borderRadius: "999px",
+                        border: "1px solid currentColor",
+                        color:
+                          statusTone(log.status) === "danger"
+                            ? "var(--eaw-color-danger)"
+                            : statusTone(log.status) === "success"
+                            ? "var(--eaw-color-success, #16a34a)"
+                            : "var(--eaw-color-text-secondary)",
+                      }}
+                    >
+                      {statusLabel(log.status)}
+                    </span>
+                  </li>
+                ))}
+                {dashboardData.recentLogs.length === 0 && (
+                  <li style={{ fontSize: "13px" }}>No recent activity.</li>
+                )}
+              </ul>
+            </>
+          )}
+        </div>
       )}
 
       {mode === "bulk" && (
