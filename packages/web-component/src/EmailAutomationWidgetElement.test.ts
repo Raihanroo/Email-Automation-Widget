@@ -523,6 +523,7 @@ describe("<email-automation-widget> (bulk mode — CSV recipients)", () => {
 
     const file = csvFile("name,company\nAlice,Acme");
     await setCsvFile(el, "eaw-bulk-csv", file);
+    await flush(el);
 
     expect(text(el)).toContain('No "email" column found');
   });
