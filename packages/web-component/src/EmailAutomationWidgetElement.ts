@@ -388,10 +388,16 @@ export class EmailAutomationWidgetElement extends LitElement {
     try {
       const text = await readFileAsText(file);
       this.csvReadError = null;
-      this.csvParseResult = parseRecipientsFromCsv(text);
+      const result = parseRecipientsFromCsv(text);
+      // Force Lit to detect the state change by creating a new reference
+      this.csvParseResult = result;
+      // Request update to ensure re-render after async operation
+      this.requestUpdate();
     } catch {
       this.csvReadError = "Could not read that file. Please upload a CSV file.";
       this.csvParseResult = null;
+      // Request update to ensure error is rendered
+      this.requestUpdate();
     }
     this.refreshBulkErrors();
   }
