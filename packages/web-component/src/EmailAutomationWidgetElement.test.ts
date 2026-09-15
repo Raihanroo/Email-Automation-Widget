@@ -508,6 +508,7 @@ describe("<email-automation-widget> (bulk mode — CSV recipients)", () => {
 
     const file = csvFile("email,name\na@x.com,Alice\nb@x.com,Bob");
     await setCsvFile(el, "eaw-bulk-csv", file);
+    await flush(el);
 
     expect(text(el)).toContain("2 valid recipients");
     expect(text(el)).toContain("Loaded:");
@@ -534,6 +535,7 @@ describe("<email-automation-widget> (bulk mode — CSV recipients)", () => {
 
     const file = csvFile("email,name\na@x.com,Alice\nb@x.com,Bob");
     await setCsvFile(el, "eaw-bulk-csv", file);
+    await flush(el);
     expect(text(el)).toContain("2 valid recipients");
 
     await setValue(el, "eaw-bulk-subject", "Hello");
