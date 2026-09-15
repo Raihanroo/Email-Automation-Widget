@@ -359,3 +359,432 @@ describe("EmailAutomationWidgetComponent (mailbox mode)", () => {
     expect(fixture.componentInstance.loading).toBe(false);
   });
 });
+
+// NOTE: as documented above, this test harness's rendered DOM text can lag
+// behind componentInstance state for updates that happen after the initial
+// detectChanges() pass. Composer/bulk state changes are all driven by direct
+// method calls below (updateComposeField, handleComposeSubmit, ...) rather
+// than simulated DOM events, and assertions are made against
+// componentInstance fields — same strategy as the mailbox/dashboard suites
+// above, and just as meaningful a check of the actual validation/submission
+// logic under test.
+
+describe("EmailAutomationWidgetComponent (composer mode)", () => {
+  it("renders an empty compose form with no validation errors initially", async () => {
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "composer");
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.composeForm).toEqual({
+      to: "",
+      cc: "",
+      bcc: "",
+      subject: "",
+      body: "",
+    });
+    expect(fixture.componentInstance.composeErrors).toEqual({});
+  });
+
+  it("shows field-level validation errors after a field is edited, without calling the network", async () => {
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "composer");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateComposeField("to", "not-an-email");
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.composeErrors.to).toMatch(/valid email/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("blocks submit and shows errors for a fully empty form", async () => {
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "composer");
+    fixture.detectChanges(false);
+
+    await fixture.componentInstance.handleComposeSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.composeErrors.to).toBe(
+      "Recipient is required"
+    );
+    expect(fixture.componentInstance.composeErrors.subject).toBe(
+      "Subject is required"
+    );
+    expect(fixture.componentInstance.composeErrors.body).toBe(
+      "Message body is required"
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("submits a valid form, emits emailSent, shows a success message, and resets the form", async () => {
+    mockFetchOnce(200, {
+      id: "log-1",
+      to: "jane@example.com",
+      subject: "Hi",
+      status: "sent",
+    });
+
+    const fixture = await createComponent();
+    const onEmailSent = vi.fn();
+    fixture.componentInstance.emailSent.subscribe(onEmailSent);
+    fixture.componentRef.setInput("mode", "composer");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateComposeField("to", "jane@example.com");
+    fixture.componentInstance.updateComposeField("subject", "Hi");
+    fixture.componentInstance.updateComposeField("body", "Hello there");
+    await fixture.componentInstance.handleComposeSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    expect(onEmailSent).toHaveBeenCalledTimes(1);
+    expect(fixture.componentInstance.sendResultMessage).toBe(
+      "Sent to jane@example.com."
+    );
+    expect(fixture.componentInstance.composeForm).toEqual({
+      to: "",
+      cc: "",
+      bcc: "",
+      subject: "",
+      body: "",
+    });
+    expect(fixture.componentInstance.sending).toBe(false);
+  });
+
+  it("shows a server error message and emits error without resetting the form when the send fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "Server exploded" }),
+      text: async () => "Server exploded",
+    }) as unknown as typeof fetch;
+
+    const fixture = await createComponent();
+    const onError = vi.fn();
+    fixture.componentInstance.error.subscribe(onError);
+    fixture.componentRef.setInput("mode", "composer");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateComposeField("to", "jane@example.com");
+    fixture.componentInstance.updateComposeField("subject", "Hi");
+    fixture.componentInstance.updateComposeField("body", "Hello there");
+    await fixture.componentInstance.handleComposeSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(fixture.componentInstance.sendResultMessage).toMatch(
+      /API request failed with status 500/
+    );
+    expect(fixture.componentInstance.composeForm.to).toBe("jane@example.com");
+  });
+});
+
+describe("EmailAutomationWidgetComponent (bulk mode)", () => {
+  it("shows 0 valid recipients and no errors initially", async () => {
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.bulkRecipients).toEqual([]);
+    expect(fixture.componentInstance.bulkErrors).toEqual({});
+  });
+
+  it("dedupes the same address case-insensitively", async () => {
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateBulkField(
+      "recipientsRaw",
+      "a@x.com, A@X.COM, b@x.com"
+    );
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.bulkRecipients).toEqual([
+      { email: "a@x.com" },
+      { email: "b@x.com" },
+    ]);
+  });
+
+  it("warns about invalid entries without blocking the valid ones", async () => {
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateBulkField(
+      "recipientsRaw",
+      "a@x.com, not-an-email"
+    );
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.bulkRecipients).toEqual([
+      { email: "a@x.com" },
+    ]);
+    expect(fixture.componentInstance.bulkInvalidEntries).toEqual([
+      "not-an-email",
+    ]);
+  });
+
+  it("blocks submit and shows errors when there are no valid recipients, subject, or body", async () => {
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.bulkErrors.recipients).toBeTruthy();
+    expect(fixture.componentInstance.bulkErrors.subject).toBeTruthy();
+    expect(fixture.componentInstance.bulkErrors.body).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("submits, shows sent/failed counts, calls bulkSent, and resets the form on a fully successful batch", async () => {
+    mockFetchOnce(200, { sentCount: 2, failedCount: 0, errors: [] });
+
+    const fixture = await createComponent();
+    const onBulkSent = vi.fn();
+    fixture.componentInstance.bulkSent.subscribe(onBulkSent);
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateBulkField(
+      "recipientsRaw",
+      "a@x.com, b@x.com"
+    );
+    fixture.componentInstance.updateBulkField("subject", "Hello");
+    fixture.componentInstance.updateBulkField("body", "Test message");
+    await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    expect(onBulkSent).toHaveBeenCalledTimes(1);
+    expect(fixture.componentInstance.bulkResult).toMatchObject({
+      sentCount: 2,
+      failedCount: 0,
+    });
+    expect(fixture.componentInstance.bulkForm).toEqual({
+      recipientsRaw: "",
+      cc: "",
+      bcc: "",
+      subject: "",
+      body: "",
+    });
+    expect(fixture.componentInstance.bulkSending).toBe(false);
+  });
+
+  it("shows a per-recipient error list for a partially-failed batch", async () => {
+    mockFetchOnce(200, {
+      sentCount: 1,
+      failedCount: 1,
+      errors: [{ email: "b@x.com", error: "Bounced" }],
+    });
+
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateBulkField(
+      "recipientsRaw",
+      "a@x.com, b@x.com"
+    );
+    fixture.componentInstance.updateBulkField("subject", "Hello");
+    fixture.componentInstance.updateBulkField("body", "Test message");
+    await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.bulkResult?.errors).toEqual([
+      { email: "b@x.com", error: "Bounced" },
+    ]);
+  });
+
+  it("shows a server error and does not reset the form when the request fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "Server exploded" }),
+      text: async () => "Server exploded",
+    }) as unknown as typeof fetch;
+
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateBulkField("recipientsRaw", "a@x.com");
+    fixture.componentInstance.updateBulkField("subject", "Hello");
+    fixture.componentInstance.updateBulkField("body", "Test message");
+    await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    expect(fixture.componentInstance.bulkErrorMessage).toMatch(
+      /API request failed with status 500/
+    );
+    expect(fixture.componentInstance.bulkForm.recipientsRaw).toBe("a@x.com");
+  });
+
+  it("passes cc/bcc as batch-level fields, not per-recipient", async () => {
+    mockFetchOnce(200, { sentCount: 1, failedCount: 0, errors: [] });
+
+    const fixture = await createComponent();
+    fixture.componentRef.setInput("mode", "bulk");
+    fixture.detectChanges(false);
+
+    fixture.componentInstance.updateBulkField("recipientsRaw", "a@x.com");
+    fixture.componentInstance.updateBulkField("cc", "manager@x.com");
+    fixture.componentInstance.updateBulkField("subject", "Hello");
+    fixture.componentInstance.updateBulkField("body", "Test message");
+    await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+    fixture.detectChanges(false);
+
+    const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.cc).toEqual(["manager@x.com"]);
+    expect(body.recipients).toEqual([{ email: "a@x.com" }]);
+  });
+
+  describe("recipient source toggle: paste vs CSV", () => {
+    it("defaults to the paste source", async () => {
+      const fixture = await createComponent();
+      fixture.componentRef.setInput("mode", "bulk");
+      fixture.detectChanges(false);
+
+      expect(fixture.componentInstance.bulkRecipientSource).toBe("paste");
+    });
+
+    it("switches to the csv source when switchBulkRecipientSource is called", async () => {
+      const fixture = await createComponent();
+      fixture.componentRef.setInput("mode", "bulk");
+      fixture.detectChanges(false);
+
+      fixture.componentInstance.switchBulkRecipientSource("csv");
+      fixture.detectChanges(false);
+
+      expect(fixture.componentInstance.bulkRecipientSource).toBe("csv");
+    });
+
+    it("parses a valid CSV, showing the recipient count and detected columns", async () => {
+      const fixture = await createComponent();
+      fixture.componentRef.setInput("mode", "bulk");
+      fixture.detectChanges(false);
+      fixture.componentInstance.switchBulkRecipientSource("csv");
+
+      const csv = "name,email\nAlice,alice@x.com\nBob,bob@x.com";
+      const file = new File([csv], "recipients.csv", { type: "text/csv" });
+      await fixture.componentInstance.handleCsvFileChange({
+        target: { files: [file] },
+      } as unknown as Event);
+      fixture.detectChanges(false);
+
+      expect(fixture.componentInstance.bulkRecipients).toHaveLength(2);
+      expect(fixture.componentInstance.csvParseResult?.headers).toEqual([
+        "name",
+        "email",
+      ]);
+      expect(fixture.componentInstance.csvFileName).toBe("recipients.csv");
+    });
+
+    it("shows a clear error when the CSV has no email column", async () => {
+      const fixture = await createComponent();
+      fixture.componentRef.setInput("mode", "bulk");
+      fixture.detectChanges(false);
+      fixture.componentInstance.switchBulkRecipientSource("csv");
+
+      const csv = "name,phone\nAlice,555-1234";
+      const file = new File([csv], "recipients.csv", { type: "text/csv" });
+      await fixture.componentInstance.handleCsvFileChange({
+        target: { files: [file] },
+      } as unknown as Event);
+      fixture.detectChanges(false);
+
+      expect(fixture.componentInstance.csvParseResult?.missingEmailColumn).toBe(
+        true
+      );
+      expect(fixture.componentInstance.bulkRecipients).toEqual([]);
+    });
+
+    it("sends per-recipient placeholderData parsed from CSV columns", async () => {
+      mockFetchOnce(200, { sentCount: 2, failedCount: 0, errors: [] });
+
+      const fixture = await createComponent();
+      fixture.componentRef.setInput("mode", "bulk");
+      fixture.detectChanges(false);
+      fixture.componentInstance.switchBulkRecipientSource("csv");
+
+      const csv = "email,name\nalice@x.com,Alice\nbob@x.com,Bob";
+      const file = new File([csv], "recipients.csv", { type: "text/csv" });
+      await fixture.componentInstance.handleCsvFileChange({
+        target: { files: [file] },
+      } as unknown as Event);
+
+      fixture.componentInstance.updateBulkField("subject", "Hi {{name}}");
+      fixture.componentInstance.updateBulkField("body", "Welcome, {{name}}!");
+      await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+      fixture.detectChanges(false);
+
+      const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0];
+      const body = JSON.parse(init.body as string);
+      expect(body.recipients).toEqual([
+        { email: "alice@x.com", placeholderData: { name: "Alice" } },
+        { email: "bob@x.com", placeholderData: { name: "Bob" } },
+      ]);
+    });
+
+    it("clears the loaded CSV file after a successful send", async () => {
+      mockFetchOnce(200, { sentCount: 1, failedCount: 0, errors: [] });
+
+      const fixture = await createComponent();
+      fixture.componentRef.setInput("mode", "bulk");
+      fixture.detectChanges(false);
+      fixture.componentInstance.switchBulkRecipientSource("csv");
+
+      const file = new File(["email\na@x.com"], "recipients.csv", {
+        type: "text/csv",
+      });
+      await fixture.componentInstance.handleCsvFileChange({
+        target: { files: [file] },
+      } as unknown as Event);
+
+      fixture.componentInstance.updateBulkField("subject", "Hello");
+      fixture.componentInstance.updateBulkField("body", "Test message");
+      await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+      fixture.detectChanges(false);
+
+      expect(fixture.componentInstance.csvFileName).toBeNull();
+      expect(fixture.componentInstance.csvParseResult).toBeNull();
+    });
+
+    it("blocks submit with a validation error when the CSV parse yields zero recipients", async () => {
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+      const fixture = await createComponent();
+      fixture.componentRef.setInput("mode", "bulk");
+      fixture.detectChanges(false);
+      fixture.componentInstance.switchBulkRecipientSource("csv");
+
+      const file = new File(["name\nAlice"], "recipients.csv", {
+        type: "text/csv",
+      });
+      await fixture.componentInstance.handleCsvFileChange({
+        target: { files: [file] },
+      } as unknown as Event);
+
+      fixture.componentInstance.updateBulkField("subject", "Hello");
+      fixture.componentInstance.updateBulkField("body", "Test message");
+      await fixture.componentInstance.handleBulkSubmit(new Event("submit"));
+      fixture.detectChanges(false);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+});
