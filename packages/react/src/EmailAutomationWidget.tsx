@@ -25,6 +25,12 @@ import {
   dashboardStats,
   statusLabel,
   statusTone,
+  LogsPage,
+  loadLogsPage,
+  toLogDetailView,
+  LOG_STATUS_FILTER_OPTIONS,
+  EmailStatus,
+  debounce,
 } from "@eaw/core";
 
 type BulkRecipientSource = "paste" | "csv";
@@ -72,6 +78,17 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [logsPage, setLogsPage] = useState<LogsPage | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [logsQueryInput, setLogsQueryInput] = useState("");
+  const [logsQuery, setLogsQuery] = useState("");
+  const [logsStatus, setLogsStatus] = useState<EmailStatus | "all">("all");
+  const [logsPageNum, setLogsPageNum] = useState(1);
+  const [selectedLogId, setSelectedLogId] = useState<string | number | null>(
+    null
+  );
 
   const [composeForm, setComposeForm] = useState<ComposeFormState>(
     emptyComposeForm()
@@ -137,6 +154,15 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
     ReturnType<typeof validateBulkComposeForm>
   >({});
 
+  const selectedLog = useMemo(
+    () => logsPage?.items.find((l) => l.id === selectedLogId) ?? null,
+    [logsPage, selectedLogId]
+  );
+  const selectedLogDetail = useMemo(
+    () => (selectedLog ? toLogDetailView(selectedLog) : null),
+    [selectedLog]
+  );
+
   const theme = useMemo(() => resolveTheme(themeOverride), [themeOverride]);
   const cssVars = useMemo(
     () => themeToCssVars(theme) as React.CSSProperties,
@@ -176,6 +202,58 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
       cancelled = true;
     };
   }, [mode, adapter, onError]);
+
+  // Debounced so typing in the logs search box doesn't fire a request
+  // per keystroke — only once the user pauses for 300ms. Also resets to
+  // page 1, since a new search invalidates whatever page the user was on.
+  const debouncedApplyLogsQuery = useMemo(
+    () =>
+      debounce((q: string) => {
+        setLogsQuery(q);
+        setLogsPageNum(1);
+      }, 300),
+    []
+  );
+
+  function updateLogsQueryInput(value: string) {
+    setLogsQueryInput(value);
+    debouncedApplyLogsQuery(value);
+  }
+
+  function updateLogsStatus(value: EmailStatus | "all") {
+    setLogsStatus(value);
+    setLogsPageNum(1);
+    setSelectedLogId(null);
+  }
+
+  useEffect(() => {
+    if (mode !== "logs") return;
+
+    let cancelled = false;
+    setLogsLoading(true);
+    setLogsError(null);
+
+    loadLogsPage(adapter, {
+      page: logsPageNum,
+      query: logsQuery,
+      status: logsStatus === "all" ? undefined : logsStatus,
+    })
+      .then((page) => {
+        if (!cancelled) setLogsPage(page);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setLogsError(err.message);
+        onError?.(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLogsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, adapter, onError, logsPageNum, logsQuery, logsStatus]);
 
   useEffect(() => {
     if (mode !== "dashboard") return;
@@ -615,6 +693,213 @@ export const EmailAutomationWidget: React.FC<WidgetProps> = ({
                 )}
               </ul>
             </>
+          )}
+        </div>
+      )}
+
+      {mode === "logs" && (
+        <div>
+          <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+            <input
+              type="text"
+              aria-label="Search logs"
+              placeholder="Search by recipient or subject…"
+              value={logsQueryInput}
+              onChange={(e) => updateLogsQueryInput(e.target.value)}
+              style={{ ...inputStyle, margin: 0, flex: 1 }}
+            />
+            <select
+              aria-label="Filter by status"
+              value={logsStatus}
+              onChange={(e) =>
+                updateLogsStatus(e.target.value as EmailStatus | "all")
+              }
+              style={{ ...inputStyle, margin: 0, width: "160px" }}
+            >
+              {LOG_STATUS_FILTER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {logsLoading && <p>Loading logs…</p>}
+          {logsError && (
+            <p style={{ color: "var(--eaw-color-danger)" }}>{logsError}</p>
+          )}
+
+          {!logsLoading && !logsError && logsPage && (
+            <>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {logsPage.items.map((log) => (
+                  <li key={log.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLogId(log.id)}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        width: "100%",
+                        padding: "8px 0",
+                        borderBottom: "1px solid var(--eaw-color-border)",
+                        border: "none",
+                        borderBottomWidth: "1px",
+                        borderBottomStyle: "solid",
+                        borderBottomColor: "var(--eaw-color-border)",
+                        background: "transparent",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        font: "inherit",
+                        color: "inherit",
+                      }}
+                    >
+                      <span>
+                        <strong>{log.subject}</strong>{" "}
+                        <span
+                          style={{ color: "var(--eaw-color-text-secondary)" }}
+                        >
+                          — {log.to}
+                        </span>
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          padding: "2px 8px",
+                          borderRadius: "999px",
+                          border: "1px solid currentColor",
+                          color:
+                            statusTone(log.status) === "danger"
+                              ? "var(--eaw-color-danger)"
+                              : statusTone(log.status) === "success"
+                              ? "var(--eaw-color-success, #16a34a)"
+                              : "var(--eaw-color-text-secondary)",
+                        }}
+                      >
+                        {statusLabel(log.status)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                {logsPage.items.length === 0 && <li>No logs found.</li>}
+              </ul>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: "12px",
+                  fontSize: "13px",
+                }}
+              >
+                <span style={{ color: "var(--eaw-color-text-secondary)" }}>
+                  Page {logsPage.page} of {logsPage.totalPages} (
+                  {logsPage.total} total)
+                </span>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    disabled={!logsPage.hasPrevPage}
+                    onClick={() => setLogsPageNum((p) => Math.max(1, p - 1))}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "var(--eaw-radius)",
+                      border: "1px solid var(--eaw-color-border)",
+                      background: "var(--eaw-color-bg)",
+                      color: "var(--eaw-color-text-primary)",
+                      cursor: logsPage.hasPrevPage ? "pointer" : "not-allowed",
+                      opacity: logsPage.hasPrevPage ? 1 : 0.5,
+                    }}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!logsPage.hasNextPage}
+                    onClick={() => setLogsPageNum((p) => p + 1)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "var(--eaw-radius)",
+                      border: "1px solid var(--eaw-color-border)",
+                      background: "var(--eaw-color-bg)",
+                      color: "var(--eaw-color-text-primary)",
+                      cursor: logsPage.hasNextPage ? "pointer" : "not-allowed",
+                      opacity: logsPage.hasNextPage ? 1 : 0.5,
+                    }}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {selectedLogDetail && (
+            <div
+              role="dialog"
+              aria-label="Message detail"
+              style={{
+                marginTop: "16px",
+                padding: "12px",
+                borderRadius: "var(--eaw-radius)",
+                border: "1px solid var(--eaw-color-border)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                }}
+              >
+                <h3 style={{ margin: "0 0 8px", fontSize: "14px" }}>
+                  {selectedLogDetail.subject}
+                </h3>
+                <button
+                  type="button"
+                  aria-label="Close message detail"
+                  onClick={() => setSelectedLogId(null)}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    lineHeight: 1,
+                    color: "var(--eaw-color-text-secondary)",
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              <p style={{ margin: "0 0 4px", fontSize: "13px" }}>
+                To: {selectedLogDetail.to}
+              </p>
+              <p style={{ margin: "0 0 4px", fontSize: "13px" }}>
+                Status: {selectedLogDetail.statusLabel}
+              </p>
+              <p style={{ margin: "0 0 4px", fontSize: "13px" }}>
+                Sent: {selectedLogDetail.sentAt}
+              </p>
+              {selectedLogDetail.openedAt && (
+                <p style={{ margin: "0 0 4px", fontSize: "13px" }}>
+                  Opened: {selectedLogDetail.openedAt}
+                </p>
+              )}
+              {selectedLogDetail.errorMessage && (
+                <p
+                  style={{
+                    margin: "0 0 4px",
+                    fontSize: "13px",
+                    color: "var(--eaw-color-danger)",
+                  }}
+                >
+                  Error: {selectedLogDetail.errorMessage}
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}

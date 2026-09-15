@@ -1,3 +1,5 @@
+/// <reference types="@testing-library/jest-dom" />
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -327,6 +329,223 @@ describe("EmailAutomationWidget (mailbox mode)", () => {
     expect(
       (init.headers as Record<string, string>)["Authorization"]
     ).toBeUndefined();
+  });
+});
+
+describe("EmailAutomationWidget (logs mode)", () => {
+  it("shows a loading state while the logs request is in flight", async () => {
+    mockFetchPending();
+    render(<EmailAutomationWidget mode="logs" />);
+    expect(await screen.findByText("Loading logs…")).toBeInTheDocument();
+  });
+
+  it("renders the log list with status badges once the request resolves", async () => {
+    mockFetchOnce(200, {
+      items: [
+        {
+          id: "l1",
+          to: "jane@example.com",
+          subject: "Weekly digest",
+          status: "opened",
+          sentAt: new Date().toISOString(),
+        },
+        {
+          id: "l2",
+          to: "bob@example.com",
+          subject: "Invoice #42",
+          status: "failed",
+          sentAt: new Date().toISOString(),
+        },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 20,
+    });
+
+    render(<EmailAutomationWidget mode="logs" baseURL="/api" />);
+
+    expect(await screen.findByText("Weekly digest")).toBeInTheDocument();
+    expect(screen.getByText("Invoice #42")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Weekly digest.*Opened/ })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Invoice #42.*Failed/ })
+    ).toBeInTheDocument();
+  });
+
+  it('shows "No logs found." when the result is empty', async () => {
+    mockFetchOnce(200, { items: [], total: 0, page: 1, pageSize: 20 });
+    render(<EmailAutomationWidget mode="logs" />);
+    expect(await screen.findByText("No logs found.")).toBeInTheDocument();
+  });
+
+  it("shows an error message and calls onError when the request fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "Server exploded" }),
+      text: async () => "Server exploded",
+    }) as unknown as typeof fetch;
+
+    const onError = vi.fn();
+    render(<EmailAutomationWidget mode="logs" onError={onError} />);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText(/API request failed with status 500/)
+    ).toBeInTheDocument();
+  });
+
+  it("re-fetches with the query param after the user pauses typing (debounced)", async () => {
+    mockFetchOnce(200, { items: [], total: 0, page: 1, pageSize: 20 });
+    const user = userEvent.setup();
+
+    render(<EmailAutomationWidget mode="logs" baseURL="/api" />);
+    await screen.findByText("No logs found.");
+
+    await user.type(screen.getByLabelText("Search logs"), "jane");
+
+    // Debounced 300ms — waitFor polls past that window on real timers.
+    await waitFor(() => {
+      const calledUrls = (
+        global.fetch as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c) => String(c[0]));
+      expect(calledUrls.some((u) => u.includes("query=jane"))).toBe(true);
+    });
+  });
+
+  it("re-fetches with the status filter and resets to page 1", async () => {
+    mockFetchOnce(200, { items: [], total: 0, page: 1, pageSize: 20 });
+    const user = userEvent.setup();
+
+    render(<EmailAutomationWidget mode="logs" baseURL="/api" />);
+    await screen.findByText("No logs found.");
+
+    await user.selectOptions(
+      screen.getByLabelText("Filter by status"),
+      "failed"
+    );
+
+    await waitFor(() => {
+      const calledUrls = (
+        global.fetch as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c) => String(c[0]));
+      expect(calledUrls.some((u) => u.includes("status=failed"))).toBe(true);
+    });
+  });
+
+  it("disables Previous on the first page and Next on the last page", async () => {
+    mockFetchOnce(200, {
+      items: [
+        {
+          id: "l1",
+          to: "a@x.com",
+          subject: "Only item",
+          status: "sent",
+          sentAt: new Date().toISOString(),
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    });
+
+    render(<EmailAutomationWidget mode="logs" />);
+    await screen.findByText("Only item");
+
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("advances to the next page when Next is clicked", async () => {
+    mockFetchOnce(200, {
+      items: Array.from({ length: 20 }, (_, i) => ({
+        id: `l${i}`,
+        to: `user${i}@x.com`,
+        subject: `Item ${i}`,
+        status: "sent",
+        sentAt: new Date().toISOString(),
+      })),
+      total: 40,
+      page: 1,
+      pageSize: 20,
+    });
+    const user = userEvent.setup();
+
+    render(<EmailAutomationWidget mode="logs" baseURL="/api" />);
+    await screen.findByText("Item 0");
+
+    const nextButton = screen.getByRole("button", { name: "Next" });
+    expect(nextButton).not.toBeDisabled();
+    await user.click(nextButton);
+
+    await waitFor(() => {
+      const calledUrls = (
+        global.fetch as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c) => String(c[0]));
+      expect(calledUrls.some((u) => u.includes("page=2"))).toBe(true);
+    });
+  });
+
+  it("opens the message detail panel when a log row is clicked, and closes it", async () => {
+    mockFetchOnce(200, {
+      items: [
+        {
+          id: "l1",
+          to: "jane@example.com",
+          subject: "Weekly digest",
+          status: "opened",
+          sentAt: "2026-01-01T00:00:00.000Z",
+          openedAt: "2026-01-01T01:00:00.000Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    });
+    const user = userEvent.setup();
+
+    render(<EmailAutomationWidget mode="logs" />);
+    await screen.findByText("Weekly digest");
+
+    await user.click(screen.getByText("Weekly digest"));
+
+    const detail = await screen.findByRole("dialog", {
+      name: "Message detail",
+    });
+    expect(detail).toHaveTextContent("To: jane@example.com");
+    expect(detail).toHaveTextContent("Status: Opened");
+
+    await user.click(screen.getByLabelText("Close message detail"));
+    expect(
+      screen.queryByRole("dialog", { name: "Message detail" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the error message from a failed log entry in the detail panel", async () => {
+    mockFetchOnce(200, {
+      items: [
+        {
+          id: "l1",
+          to: "bob@example.com",
+          subject: "Invoice #42",
+          status: "failed",
+          sentAt: "2026-01-01T00:00:00.000Z",
+          errorMessage: "Mailbox full",
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    });
+    const user = userEvent.setup();
+
+    render(<EmailAutomationWidget mode="logs" />);
+    await screen.findByText("Invoice #42");
+    await user.click(screen.getByText("Invoice #42"));
+
+    expect(await screen.findByText("Error: Mailbox full")).toBeInTheDocument();
   });
 });
 
